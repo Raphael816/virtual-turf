@@ -1,8 +1,11 @@
+import { BET_TYPES } from './core/bettypes';
 import { createMeeting, runRace, verifyRace } from './core/meeting';
+import { buildOddsBook, marketPools, payout, popularity, settleOdds } from './core/pool';
+import { estimateProbabilities } from './core/probability';
 import { GOING_LABEL, PACE_LABEL, SURFACE_LABEL, WEATHER_LABEL, formatTime } from './core/sim';
 import { HORSE_BY_ID, STYLE_LABEL, TRACK_NAME } from './data/roster';
 
-// Step 2: シミュレーションエンジンのテキストプレビュー。画面は Step 4 で実装する
+// Step 2〜3: シミュレーションとオッズのテキストプレビュー。画面は Step 4 で実装する
 const app = document.getElementById('app')!;
 
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
@@ -14,6 +17,18 @@ async function render(meetingId: string, raceNo: number) {
   const verify = await verifyRace(card, card.seed);
   const c = card.conditions;
   const num = (i: number) => card.entries[i].number;
+  // 締切時点の市場プール（デモ）からオッズと払戻を計算
+  const numbers = card.entries.map((e) => e.number);
+  const pools = marketPools(card.id, numbers, estimateProbabilities(card), 1, 0);
+  const book = buildOddsBook(pools, numbers);
+  const pop = popularity(book, 'win');
+  const officialOrder = res.order.map(num);
+  const payouts = settleOdds(pools, officialOrder, numbers.length);
+  const payoutRows = BET_TYPES.flatMap((t) =>
+    Object.entries(payouts[t.id]).map(
+      ([k, o]) => `<tr><td>${t.label}</td><td>${k}</td><td>${payout(100, o).toLocaleString()}コイン</td><td>${o.toFixed(1)}倍</td></tr>`,
+    ),
+  ).join('');
   const rows = res.order
     .map((i, rank) => {
       const e = card.entries[i];
@@ -26,7 +41,7 @@ async function render(meetingId: string, raceNo: number) {
         f.gaveUpLead && 'ハナ争い負け',
       ].filter(Boolean);
       return `<tr><td>${rank + 1}</td><td>${e.frame}</td><td>${e.number}</td><td>${esc(h.name)}</td>
-        <td>${STYLE_LABEL[h.style]}</td><td>${formatTime(res.finishTimes[i])}</td><td>${res.margins[i]}</td>
+        <td>${STYLE_LABEL[h.style]}</td><td>${book.odds.win[String(e.number)]?.toFixed(1)}（${pop.indexOf(String(e.number)) + 1}人気）</td><td>${formatTime(res.finishTimes[i])}</td><td>${res.margins[i]}</td>
         <td>${res.last3F[i].toFixed(1)}</td><td>${f.laneLoss.toFixed(1)}m</td><td>${notes.join('・')}</td></tr>`;
     })
     .join('');
@@ -42,8 +57,10 @@ async function render(meetingId: string, raceNo: number) {
     <p>ペース: <b>${PACE_LABEL[res.pace]}</b>（前半3F ${res.first3F.toFixed(1)} / 後半3F ${res.final3F.toFixed(1)}）<br>
       ラップ: ${res.splits.map((s) => s.toFixed(1)).join(' - ')}</p>
     <div style="overflow-x:auto"><table style="border-collapse:collapse;white-space:nowrap" border="1" cellpadding="4">
-      <thead><tr><th>着</th><th>枠</th><th>馬番</th><th>馬名</th><th>脚質</th><th>タイム</th><th>着差</th><th>上がり3F</th><th>外々ロス</th><th>メモ</th></tr></thead>
+      <thead><tr><th>着</th><th>枠</th><th>馬番</th><th>馬名</th><th>脚質</th><th>単勝</th><th>タイム</th><th>着差</th><th>上がり3F</th><th>外々ロス</th><th>メモ</th></tr></thead>
       <tbody>${rows}</tbody></table></div>
+    <h2 style="font-size:1.1rem">払戻（100コインあたり）</h2>
+    <table style="border-collapse:collapse" border="1" cellpadding="4"><thead><tr><th>券種</th><th>組番</th><th>払戻</th><th>オッズ</th></tr></thead><tbody>${payoutRows}</tbody></table>
     <p>通過順: ${res.cornerOrders.map((k) => `${k.corner}角 ${k.order.map(num).join('-')}`).join('｜')}</p>
     <details><summary>公正性の検証（コミット・リビール）</summary>
       <p style="word-break:break-all">コミット（発売前に公開）: <code>${card.commit}</code><br>
