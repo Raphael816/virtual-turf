@@ -3,7 +3,7 @@ import { CLOSE_INTERVAL_MS, FIRST_CLOSE_MS } from '../../core/raceflow';
 import { DEFAULT_LIMITS } from '../../core/responsible';
 import { INITIAL_GRANT, REFILL_AMOUNT, REFILL_THRESHOLD } from '../../core/state';
 import type { Page } from '../common';
-import { coins } from '../util';
+import { coins, prefersReducedMotion } from '../util';
 
 export function guidePage(): Page {
   return {
@@ -109,7 +109,7 @@ export function guidePage(): Page {
         a.addEventListener('click', (ev) => {
           ev.preventDefault();
           const target = document.getElementById(a.dataset.jump!);
-          target?.scrollIntoView({ behavior: 'smooth' });
+          target?.scrollIntoView({ behavior: prefersReducedMotion() ? 'auto' : 'smooth' });
           target?.setAttribute('tabindex', '-1');
           target?.focus({ preventScroll: true });
         }),

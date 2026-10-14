@@ -7,6 +7,7 @@ import { type CommentaryLine, buildCommentary } from '../../core/commentary';
 import { runRace, verifyRace } from '../../core/meeting';
 import { type OddsBook, payout, popularity } from '../../core/pool';
 import { closeRace, currentOddsBook, finishRace } from '../../core/raceflow';
+import { analyzeRace } from '../../core/analysis';
 import { PACE_LABEL, type SimResult, formatTime } from '../../core/sim';
 import { placeBet, quoteBet } from '../../core/state';
 import { STYLE_LABEL } from '../../data/roster';
@@ -286,7 +287,28 @@ export function racePage(raceId: string): Page {
     const mine = store.state.tickets.filter((t) => t.raceId === card.id);
     const stakeSum = mine.reduce((a, t) => a + t.stake, 0);
     const paySum = mine.reduce((a, t) => a + (t.payout ?? 0), 0);
+    const an = analyzeRace(card, res, finalPop[0] ? Number(finalPop[0]) : undefined);
+    const factorRows = an.rows
+      .map(
+        (r) => `<tr><td>${r.rank}</td><td>${r.number}</td><td>${esc(r.name)}</td><td>${r.style}</td>
+          <td class="r tnum">${r.posAtLastCorner || '—'}</td><td class="r tnum">${r.last3F.toFixed(1)}（${r.last3FRank}）</td>
+          <td class="r tnum">${r.laneLoss.toFixed(0)}m</td><td>${r.notes.join('・') || '—'}</td></tr>`,
+      )
+      .join('');
     return `
+      <section class="card" aria-labelledby="review-h" style="margin-bottom:16px;background:var(--surface-2)">
+        <h2 id="review-h" style="font-size:1.05rem">レースの振り返り</h2>
+        <p><b>${esc(an.headline)}</b></p>
+        <ul style="margin:0 0 8px;padding-left:1.2em">${an.points.map((p) => `<li>${esc(p)}</li>`).join('')}</ul>
+        ${an.favoriteNote ? `<p style="margin:0">${esc(an.favoriteNote)}</p>` : ''}
+        <details style="margin-top:8px"><summary>結果に影響した要素の内訳</summary>
+          <div class="table-wrap"><table class="table nowrap" style="margin-top:8px">
+            <caption class="sr-only">各馬の要素</caption>
+            <thead><tr><th>着</th><th>馬番</th><th>馬名</th><th>脚質</th><th class="r">4角</th><th class="r">上がり3F（順位）</th><th class="r">外々ロス</th><th>主な出来事</th></tr></thead>
+            <tbody>${factorRows}</tbody></table></div>
+          <p class="muted" style="font-size:.8rem">外々ロス＝コーナーで外を回ったことで余分に走った距離。能力・適性に加え、当日の調子と小さなゆらぎも結果に影響します。</p>
+        </details>
+      </section>
       <h2>確定 — ${PACE_LABEL[res.pace]}</h2>
       <p class="muted" style="font-size:.85rem">前半3F ${res.first3F.toFixed(1)}／後半3F ${res.final3F.toFixed(1)}／ラップ ${res.splits.map((s) => s.toFixed(1)).join('-')}</p>
       <div class="table-wrap"><table class="table">

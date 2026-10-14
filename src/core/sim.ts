@@ -120,6 +120,9 @@ export function marginLabel(lengths: number): string {
   return '大差';
 }
 
+/** 着差の読み（「ハナ」「大差」などはそのまま、数値には「馬身」をつける） */
+export const marginText = (m: string): string => (['ハナ', 'アタマ', 'クビ', '大差'].includes(m) ? m : `${m}馬身`);
+
 const clamp = (v: number, lo: number, hi: number) => (v < lo ? lo : v > hi ? hi : v);
 
 export function simulateRace(cond: RaceConditions, runners: SimRunner[], seed: string, opts: SimOptions = {}): SimResult {

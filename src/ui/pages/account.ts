@@ -92,7 +92,7 @@ export function accountPage(): Page {
       <section class="card" aria-labelledby="aud-h"><h2 id="aud-h">監査ログ</h2>
         <p class="muted" style="font-size:.88rem">購入・締切・確定・払戻などの記録です。各記録は前の記録のハッシュを含むため、途中を書き換えると検出できます。</p>
         <button class="btn btn-sm" data-verify-audit>ログの整合性を検証</button> <span data-audit-msg aria-live="polite">${auditMsg}</span>
-        <div class="table-wrap" style="max-height:320px;overflow-y:auto;margin-top:8px"><table class="table">
+        <div class="table-wrap" style="max-height:320px;overflow-y:auto;margin-top:8px" tabindex="0" role="region" aria-label="監査ログの一覧（スクロールできます）"><table class="table">
           <thead><tr><th>#</th><th>日時</th><th>内容</th><th>ハッシュ</th></tr></thead>
           <tbody>${[...s.audit]
             .reverse()
