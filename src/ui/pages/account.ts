@@ -1,5 +1,6 @@
 import { appendAudit, verifyAudit } from '../../core/audit';
 import {
+  BET_LIMITS_ENABLED,
   type Limits,
   changeLimits,
   effectiveLimits,
@@ -50,16 +51,20 @@ export function accountPage(): Page {
       </section>
 
       <section class="card" aria-labelledby="lim-h"><h2 id="lim-h">利用上限</h2>
-        <p class="muted" style="font-size:.88rem">引き下げはすぐに反映されます。引き上げは<b>24時間後</b>に反映されます。</p>
+        ${
+          BET_LIMITS_ENABLED
+            ? '<p class="muted" style="font-size:.88rem">引き下げはすぐに反映されます。引き上げは<b>24時間後</b>に反映されます。</p>'
+            : '<p class="notice notice-info" style="margin-bottom:12px">現在、投票上限（1レース・1日・損失）はオフです（デモ設定）。残高の範囲で自由に投票できます。</p>'
+        }
         ${pending ? `<p class="notice" style="margin-bottom:12px">引き上げの反映待ち：${fmtDate(pending.effectiveAt)} から 1レース ${coins(pending.limits.perRace)}／1日 ${coins(pending.limits.daily)}／損失 ${coins(pending.limits.dailyLoss)}</p>` : ''}
         <form data-form="limits">
           <div class="grid grid-2">
-            ${numField('perRace', '1レースあたりの投票上限（コイン）')}
-            ${numField('daily', '1日あたりの投票上限（コイン）')}
-            ${numField('dailyLoss', '1日の損失上限（コイン）')}
+            ${BET_LIMITS_ENABLED ? numField('perRace', '1レースあたりの投票上限（コイン）') : ''}
+            ${BET_LIMITS_ENABLED ? numField('daily', '1日あたりの投票上限（コイン）') : ''}
+            ${BET_LIMITS_ENABLED ? numField('dailyLoss', '1日の損失上限（コイン）') : ''}
             ${numField('sessionReminderMin', '利用時間のお知らせ（分ごと、0で無効）', 5)}
           </div>
-          <button class="btn btn-primary">上限を保存</button>
+          <button class="btn btn-primary">${BET_LIMITS_ENABLED ? '上限を保存' : '保存'}</button>
         </form>
       </section>
 
@@ -138,7 +143,9 @@ export function accountPage(): Page {
       store.set({ ...store.state, nickname: String(fd.get('nickname') ?? '').trim().slice(0, 20) || 'ゲスト' });
       toast('保存しました。');
     } else if (form.dataset.form === 'limits') {
-      const n = (k: string) => Math.max(0, Math.floor(Number(fd.get(k)) || 0));
+      const cur = effectiveLimits(store.state, store.now());
+      // 非表示の項目は現在の値をそのまま使う
+      const n = (k: keyof Limits) => (fd.has(k) ? Math.max(0, Math.floor(Number(fd.get(k)) || 0)) : cur[k]);
       const next: Limits = {
         perRace: Math.floor(n('perRace') / 100) * 100,
         daily: Math.floor(n('daily') / 100) * 100,

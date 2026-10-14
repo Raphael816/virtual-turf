@@ -18,6 +18,13 @@ export interface Limits {
   sessionReminderMin: number;
 }
 
+/**
+ * 投票上限（1レース・1日・損失）を適用するか。
+ * デモでは一旦オフにしている。仕組みは残してあるので、true に戻せばすぐに有効になる。
+ * 実際のお金を扱う場合は必ず有効にすること（docs/03-legal-and-safety.md）。
+ */
+export const BET_LIMITS_ENABLED = false;
+
 export const DEFAULT_LIMITS: Limits = { perRace: 3000, daily: 10000, dailyLoss: 5000, sessionReminderMin: 30 };
 export const LIMIT_INCREASE_DELAY_MS = 24 * 60 * 60 * 1000;
 export const HOUR = 60 * 60 * 1000;
@@ -78,7 +85,14 @@ export function effectiveLimits(state: AppState, ts: number): Limits {
   return state.limits;
 }
 
-export function checkBet(state: AppState, raceId: string, stake: number, ts: number, raceOpen: boolean): CheckResult {
+export function checkBet(
+  state: AppState,
+  raceId: string,
+  stake: number,
+  ts: number,
+  raceOpen: boolean,
+  enforceLimits = BET_LIMITS_ENABLED,
+): CheckResult {
   if (state.selfExcludedUntil && ts < state.selfExcludedUntil) {
     return { ok: false, code: 'self_excluded', message: `自己排除中のため、${fmtDate(state.selfExcludedUntil)}まで投票できません。` };
   }
@@ -90,6 +104,7 @@ export function checkBet(state: AppState, raceId: string, stake: number, ts: num
     return { ok: false, code: 'min_unit', message: '賭け金は100コイン単位で指定してください。' };
   }
   if (stake > state.balance) return { ok: false, code: 'balance', message: '残高が不足しています。' };
+  if (!enforceLimits) return { ok: true };
   const lim = effectiveLimits(state, ts);
   if (raceStaked(state, raceId) + stake > lim.perRace) {
     return {
