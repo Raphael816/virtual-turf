@@ -64,6 +64,8 @@ export interface AppState {
   audit: AuditEntry[];
   /** 現在の開催（出走表・発売状況） */
   meeting?: MeetingState;
+  /** 過去の開催も含むレースID → 表示名（収支画面用） */
+  raceNames?: Record<string, string>;
 }
 
 let idCounter = 0;

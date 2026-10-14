@@ -1,79 +1,193 @@
-import { BET_TYPES } from './core/bettypes';
-import { createMeeting, runRace, verifyRace } from './core/meeting';
-import { buildOddsBook, marketPools, payout, popularity, settleOdds } from './core/pool';
-import { estimateProbabilities } from './core/probability';
-import { GOING_LABEL, PACE_LABEL, SURFACE_LABEL, WEATHER_LABEL, formatTime } from './core/sim';
-import { HORSE_BY_ID, STYLE_LABEL, TRACK_NAME } from './data/roster';
+import './ui/styles.css';
+import { dayStats, effectiveLimits, reminderDue, startBreak } from './core/responsible';
+import { type Page, ICONS } from './ui/common';
+import { accountPage } from './ui/pages/account';
+import { guidePage } from './ui/pages/guide';
+import { historyPage } from './ui/pages/history';
+import { homePage } from './ui/pages/home';
+import { horsePage } from './ui/pages/horse';
+import { racePage } from './ui/pages/race';
+import { racesPage } from './ui/pages/races';
+import { store } from './ui/store';
+import { $, coins, esc, openDialog, signClass, signed, toast } from './ui/util';
 
-// Step 2〜3: シミュレーションとオッズのテキストプレビュー。画面は Step 4 で実装する
-const app = document.getElementById('app')!;
+const NAV = [
+  { href: '#/', label: 'トップ', icon: ICONS.home, match: /^$/ },
+  { href: '#/races', label: 'レース', icon: ICONS.races, match: /^(races|race\/)/ },
+  { href: '#/history', label: '収支', icon: ICONS.history, match: /^history/ },
+  { href: '#/guide', label: '遊び方', icon: ICONS.guide, match: /^guide/ },
+  { href: '#/account', label: '設定', icon: ICONS.account, match: /^account/ },
+];
 
-const esc = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
-
-async function render(meetingId: string, raceNo: number) {
-  const cards = await createMeeting(meetingId);
-  const card = cards[raceNo - 1];
-  const res = runRace(card, card.seed);
-  const verify = await verifyRace(card, card.seed);
-  const c = card.conditions;
-  const num = (i: number) => card.entries[i].number;
-  // 締切時点の市場プール（デモ）からオッズと払戻を計算
-  const numbers = card.entries.map((e) => e.number);
-  const pools = marketPools(card.id, numbers, estimateProbabilities(card), 1, 0);
-  const book = buildOddsBook(pools, numbers);
-  const pop = popularity(book, 'win');
-  const officialOrder = res.order.map(num);
-  const payouts = settleOdds(pools, officialOrder, numbers.length);
-  const payoutRows = BET_TYPES.flatMap((t) =>
-    Object.entries(payouts[t.id]).map(
-      ([k, o]) => `<tr><td>${t.label}</td><td>${k}</td><td>${payout(100, o).toLocaleString()}コイン</td><td>${o.toFixed(1)}倍</td></tr>`,
-    ),
-  ).join('');
-  const rows = res.order
-    .map((i, rank) => {
-      const e = card.entries[i];
-      const h = HORSE_BY_ID.get(e.horseId)!;
-      const f = res.factors[i];
-      const notes = [
-        f.lateStart && '出遅れ',
-        f.kakari && '掛かり',
-        f.blockedTime > 2 && `詰まり${f.blockedTime.toFixed(1)}s`,
-        f.gaveUpLead && 'ハナ争い負け',
-      ].filter(Boolean);
-      return `<tr><td>${rank + 1}</td><td>${e.frame}</td><td>${e.number}</td><td>${esc(h.name)}</td>
-        <td>${STYLE_LABEL[h.style]}</td><td>${book.odds.win[String(e.number)]?.toFixed(1)}（${pop.indexOf(String(e.number)) + 1}人気）</td><td>${formatTime(res.finishTimes[i])}</td><td>${res.margins[i]}</td>
-        <td>${res.last3F[i].toFixed(1)}</td><td>${f.laneLoss.toFixed(1)}m</td><td>${notes.join('・')}</td></tr>`;
-    })
-    .join('');
-
-  app.innerHTML = `
-  <main style="font-family:system-ui,sans-serif;max-width:60rem;margin:1.5rem auto;padding:0 16px;line-height:1.6">
-    <h1 style="font-size:1.4rem">Virtual Turf — シミュレーション プレビュー（Step 2）</h1>
-    <p>${TRACK_NAME} ${card.no}R ${esc(card.name)}｜${SURFACE_LABEL[c.surface]}${c.distance}m・${WEATHER_LABEL[c.weather]}・${GOING_LABEL[c.going]}・${card.entries.length}頭</p>
-    <p>
-      <label>レース <select id="race">${cards.map((k) => `<option value="${k.no}" ${k.no === raceNo ? 'selected' : ''}>${k.no}R ${esc(k.name)}</option>`).join('')}</select></label>
-      <button id="next">別の開催を生成</button>
-    </p>
-    <p>ペース: <b>${PACE_LABEL[res.pace]}</b>（前半3F ${res.first3F.toFixed(1)} / 後半3F ${res.final3F.toFixed(1)}）<br>
-      ラップ: ${res.splits.map((s) => s.toFixed(1)).join(' - ')}</p>
-    <div style="overflow-x:auto"><table style="border-collapse:collapse;white-space:nowrap" border="1" cellpadding="4">
-      <thead><tr><th>着</th><th>枠</th><th>馬番</th><th>馬名</th><th>脚質</th><th>単勝</th><th>タイム</th><th>着差</th><th>上がり3F</th><th>外々ロス</th><th>メモ</th></tr></thead>
-      <tbody>${rows}</tbody></table></div>
-    <h2 style="font-size:1.1rem">払戻（100コインあたり）</h2>
-    <table style="border-collapse:collapse" border="1" cellpadding="4"><thead><tr><th>券種</th><th>組番</th><th>払戻</th><th>オッズ</th></tr></thead><tbody>${payoutRows}</tbody></table>
-    <p>通過順: ${res.cornerOrders.map((k) => `${k.corner}角 ${k.order.map(num).join('-')}`).join('｜')}</p>
-    <details><summary>公正性の検証（コミット・リビール）</summary>
-      <p style="word-break:break-all">コミット（発売前に公開）: <code>${card.commit}</code><br>
-      公開 seed: <code>${card.seed}</code><br>
-      再計算ハッシュ: <code>${verify.recomputedHash}</code> → ${verify.hashOk ? '✅ 一致' : '❌ 不一致'}<br>
-      再計算着順: ${verify.order.join('-')}</p>
-    </details>
-    <p style="color:#555">デモ専用・架空の馬とレースです。映像・投票画面は今後のステップで実装します。</p>
-  </main>`;
-
-  app.querySelector<HTMLSelectElement>('#race')!.onchange = (ev) =>
-    render(meetingId, Number((ev.target as HTMLSelectElement).value));
-  app.querySelector<HTMLButtonElement>('#next')!.onclick = () => render(`m${Date.now()}`, raceNo);
+function shell(): void {
+  document.body.innerHTML = `
+    <a class="skip-link" href="#main">本文へスキップ</a>
+    <header class="site-header">
+      <a class="brand" href="#/" aria-label="Virtual Turf トップへ"><span class="brand-mark" aria-hidden="true">🏇</span><span>Virtual Turf</span></a>
+      <span class="demo-badge" title="デモコインは換金できません">DEMO</span>
+      <nav class="nav-desktop" aria-label="メイン">${NAV.map((n) => `<a href="${n.href}">${n.label}</a>`).join('')}</nav>
+      <div class="wallet" id="wallet" aria-live="off"></div>
+    </header>
+    <main id="main" tabindex="-1"></main>
+    <footer class="site-footer">
+      <p>これは競馬シミュレーションのデモです。デモコインは購入・換金・譲渡ができず、金銭的な価値はありません。
+      登場する馬・人物・競馬場・レースはすべて架空です。<a href="#/guide">遊び方と仕組み</a>／<a href="#/account">利用上限・休止の設定</a></p>
+    </footer>
+    <nav class="nav-mobile" aria-label="メイン">${NAV.map((n) => `<a href="${n.href}">${n.icon}<span>${n.label}</span></a>`).join('')}</nav>
+    <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>`;
 }
 
-render(`m${new Date().toISOString().slice(0, 10)}`, 8);
+function renderWallet(): void {
+  const s = store.state;
+  const st = dayStats(s, store.now());
+  $(document, '#wallet').innerHTML = `
+    <b class="tnum">${coins(s.balance)}</b> <small style="display:inline">コイン</small>
+    <small>本日 <span class="tnum ${signClass(st.settledNet)}">${signed(st.settledNet)}</span></small>`;
+}
+
+// ---- ルーター ----
+let current: Page | null = null;
+
+function route(): void {
+  const path = location.hash.replace(/^#\/?/, '');
+  current?.dispose?.();
+  const [head, param] = path.split('/');
+  let page: Page;
+  switch (head) {
+    case '':
+      page = homePage();
+      break;
+    case 'guide':
+      page = guidePage();
+      break;
+    case 'races':
+      page = racesPage();
+      break;
+    case 'race':
+      page = racePage(decodeURIComponent(param ?? ''));
+      break;
+    case 'horse':
+      page = horsePage(decodeURIComponent(param ?? ''));
+      break;
+    case 'history':
+      page = historyPage();
+      break;
+    case 'account':
+      page = accountPage();
+      break;
+    default:
+      page = {
+        title: 'ページが見つかりません',
+        render: (el) => (el.innerHTML = '<h1>ページが見つかりません</h1><p><a href="#/">トップへ</a></p>'),
+      };
+  }
+  current = page;
+  const main = $(document, '#main');
+  page.render(main);
+  document.title = `${page.title} | Virtual Turf`;
+  document.querySelectorAll<HTMLAnchorElement>('.nav-desktop a, .nav-mobile a').forEach((a) => {
+    const n = NAV.find((x) => x.href === a.getAttribute('href'));
+    if (n?.match.test(path)) a.setAttribute('aria-current', 'page');
+    else a.removeAttribute('aria-current');
+  });
+  window.scrollTo(0, 0);
+  main.focus({ preventScroll: true });
+}
+
+// ---- 年齢確認（初回のみ） ----
+function ageGate(): Promise<boolean> {
+  return new Promise((resolve) => {
+    const dlg = openDialog(
+      `<div class="dialog-body">
+        <h2>はじめに</h2>
+        <p>Virtual Turf は、架空の馬で遊ぶ<strong>競馬シミュレーションのデモ</strong>です。</p>
+        <ul>
+          <li>賭けには<strong>デモコイン</strong>だけを使います。購入・換金・譲渡はできず、金銭的な価値はありません。</li>
+          <li>登場する馬・騎手・競馬場・レースはすべて架空です。</li>
+          <li>ご利用は<strong>18歳以上</strong>の方に限ります（自己申告）。</li>
+        </ul>
+        <p class="muted">デモのため年齢は自己申告で確認しています。本番では提供地域の法令に沿った本人確認を行います。</p>
+      </div>
+      <div class="dialog-actions">
+        <button class="btn" data-age="no">18歳未満です</button>
+        <button class="btn btn-primary" data-age="yes">18歳以上です。はじめる</button>
+      </div>`,
+      { label: '年齢確認' },
+    );
+    dlg.addEventListener('cancel', (ev) => ev.preventDefault()); // Esc で閉じさせない
+    dlg.addEventListener('click', (ev) => {
+      const v = (ev.target as HTMLElement).closest<HTMLElement>('[data-age]')?.dataset.age;
+      if (!v) return;
+      dlg.close();
+      resolve(v === 'yes');
+    });
+  });
+}
+
+// ---- 利用時間リマインダー・損失通知 ----
+let lossNotifiedDay = '';
+function responsibleChecks(): void {
+  const now = store.now();
+  const s = store.state;
+  const lim = effectiveLimits(s, now);
+  if (reminderDue(store.sessionStart, store.lastReminder, lim, now) && !document.querySelector('dialog[open]')) {
+    store.lastReminder = now;
+    const mins = Math.round((now - store.sessionStart) / 60000);
+    const st = dayStats(s, now);
+    const dlg = openDialog(
+      `<div class="dialog-body">
+        <h2>利用時間のお知らせ</h2>
+        <p>このセッションを始めてから <strong>${mins}分</strong> が経過しました。</p>
+        <dl><dt>本日の投票額</dt><dd>${coins(st.staked)}</dd><dt>本日の収支（確定分）</dt><dd class="${signClass(st.settledNet)}">${signed(st.settledNet)}</dd></dl>
+        <p class="muted">通知の間隔は「設定」で変更できます。</p>
+      </div>
+      <div class="dialog-actions">
+        <button class="btn" data-break>24時間休止する</button>
+        <button class="btn btn-primary" data-close>続ける</button>
+      </div>`,
+      { label: '利用時間のお知らせ' },
+    );
+    dlg.querySelector('[data-break]')?.addEventListener('click', () => {
+      store.set(startBreak(store.state, 24, store.now()));
+      dlg.close();
+      toast('24時間の休止を開始しました。観戦はできますが投票はできません。');
+    });
+  }
+  const st = dayStats(s, now);
+  const key = new Date(now).toDateString();
+  if (lossNotifiedDay !== key && -st.settledNet >= lim.dailyLoss * 0.8) {
+    lossNotifiedDay = key;
+    toast(`本日の損失が上限（${coins(lim.dailyLoss)}コイン）の80%に達しました。`, 'warn');
+  }
+}
+
+async function boot(): Promise<void> {
+  shell();
+  const main = $(document, '#main');
+  main.innerHTML = '<p class="loading">読み込み中…</p>';
+  await store.init();
+  renderWallet();
+
+  if (!store.state.ageConfirmedAt) {
+    const ok = await ageGate();
+    if (!ok) {
+      main.innerHTML = `<div class="card"><h1>ご利用いただけません</h1>
+        <p>このサービスは18歳以上の方を対象としています。</p></div>`;
+      return;
+    }
+    store.set({ ...store.state, ageConfirmedAt: store.now() });
+  }
+
+  store.subscribe((reason) => {
+    renderWallet();
+    current?.update?.(reason);
+    if (reason !== 'probs') responsibleChecks();
+  });
+  window.addEventListener('hashchange', route);
+  route();
+}
+
+boot().catch((err) => {
+  console.error(err);
+  document.body.innerHTML = `<main style="padding:24px"><h1>読み込みに失敗しました</h1><p>${esc(String(err))}</p></main>`;
+});

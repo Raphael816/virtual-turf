@@ -69,7 +69,9 @@ export async function openMeeting(state: AppState, meetingId: string, cards: Rac
     runtime[c.id] = { openedAt: now, closesAt: now + FIRST_CLOSE_MS + (c.no - 1) * CLOSE_INTERVAL_MS };
     audit = await appendAudit(audit, 'race_open', { race: c.id, commit: c.commit, engine: c.engineVersion }, now);
   }
-  return { ...state, audit, meeting: { id: meetingId, createdAt: now, cards, runtime } };
+  const raceNames = { ...state.raceNames };
+  for (const c of cards) raceNames[c.id] = `${c.no}R ${c.name}`;
+  return { ...state, audit, raceNames, meeting: { id: meetingId, createdAt: now, cards, runtime } };
 }
 
 /** 発売の進み具合（0.25 で始まり、締切で 1） */
