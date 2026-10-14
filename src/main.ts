@@ -1,5 +1,5 @@
 import './ui/styles.css';
-import { BET_LIMITS_ENABLED, dayStats, effectiveLimits, reminderDue, startBreak } from './core/responsible';
+import { BET_LIMITS_ENABLED, SELF_EXCLUSION_ENABLED, dayStats, effectiveLimits, reminderDue, startBreak } from './core/responsible';
 import { type Page, ICONS } from './ui/common';
 import { accountPage } from './ui/pages/account';
 import { guidePage } from './ui/pages/guide';
@@ -31,7 +31,7 @@ function shell(): void {
     <main id="main" tabindex="-1"></main>
     <footer class="site-footer">
       <p>これは競馬シミュレーションのデモです。デモコインは購入・換金・譲渡ができず、金銭的な価値はありません。
-      登場する馬・人物・競馬場・レースはすべて架空です。<a href="#/guide">遊び方と仕組み</a>／<a href="#/account">利用上限・休止の設定</a></p>
+      登場する馬・人物・競馬場・レースはすべて架空です。<a href="#/guide">遊び方と仕組み</a>／<a href="#/account">設定</a></p>
     </footer>
     <nav class="nav-mobile" aria-label="メイン">${NAV.map((n) => `<a href="${n.href}">${n.icon}<span>${n.label}</span></a>`).join('')}</nav>
     <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>`;
@@ -142,7 +142,7 @@ function responsibleChecks(): void {
         <p class="muted">通知の間隔は「設定」で変更できます。</p>
       </div>
       <div class="dialog-actions">
-        <button class="btn" data-break>24時間休止する</button>
+        ${SELF_EXCLUSION_ENABLED ? '<button class="btn" data-break>24時間休止する</button>' : ''}
         <button class="btn btn-primary" data-close>続ける</button>
       </div>`,
       { label: '利用時間のお知らせ' },

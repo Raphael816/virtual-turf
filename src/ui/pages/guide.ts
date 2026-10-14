@@ -1,6 +1,6 @@
 import { BET_TYPES } from '../../core/bettypes';
 import { CLOSE_INTERVAL_MS, FIRST_CLOSE_MS } from '../../core/raceflow';
-import { BET_LIMITS_ENABLED, DEFAULT_LIMITS } from '../../core/responsible';
+import { BET_LIMITS_ENABLED, DEFAULT_LIMITS, SELF_EXCLUSION_ENABLED } from '../../core/responsible';
 import { INITIAL_GRANT, REFILL_AMOUNT, REFILL_THRESHOLD } from '../../core/state';
 import type { Page } from '../common';
 import { coins, prefersReducedMotion } from '../util';
@@ -103,9 +103,9 @@ export function guidePage(): Page {
                 : '<li>投票上限（1レース・1日・損失）は、現在デモ設定でオフにしています。残高の範囲で自由に投票できます。</li>'
             }
             <li>${DEFAULT_LIMITS.sessionReminderMin}分ごとに利用時間と収支をお知らせします。</li>
-            <li>24時間・7日の一時休止、30日以上の自己排除を設定できます（期間中は解除できません）。</li>
+            ${SELF_EXCLUSION_ENABLED ? '<li>24時間・7日の一時休止、30日以上の自己排除を設定できます（期間中は解除できません）。</li>' : ''}
           </ul>
-          <p><a class="btn" href="#/account">上限・休止を設定する</a></p>
+          <p><a class="btn" href="#/account">設定を開く</a></p>
         </section>`;
 
       // ハッシュルーターと衝突しないよう、目次はスクロールで移動する

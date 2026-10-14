@@ -25,6 +25,21 @@ export interface Limits {
  */
 export const BET_LIMITS_ENABLED = false;
 
+/**
+ * 一時休止・自己排除を適用するか。デモでは一旦オフにしている（設定画面にも表示しない）。
+ * 保存済みの休止・自己排除の期限があっても、オフの間は投票を止めない。
+ * 実際のお金を扱う場合は必ず有効にすること（docs/03-legal-and-safety.md）。
+ */
+export const SELF_EXCLUSION_ENABLED = false;
+
+/** 休止・自己排除による投票の制限（なければ null） */
+export function activeRestriction(state: AppState, ts: number, enabled = SELF_EXCLUSION_ENABLED): { code: 'self_excluded' | 'on_break'; until: number } | null {
+  if (!enabled) return null;
+  if (state.selfExcludedUntil && ts < state.selfExcludedUntil) return { code: 'self_excluded', until: state.selfExcludedUntil };
+  if (state.breakUntil && ts < state.breakUntil) return { code: 'on_break', until: state.breakUntil };
+  return null;
+}
+
 export const DEFAULT_LIMITS: Limits = { perRace: 3000, daily: 10000, dailyLoss: 5000, sessionReminderMin: 30 };
 export const LIMIT_INCREASE_DELAY_MS = 24 * 60 * 60 * 1000;
 export const HOUR = 60 * 60 * 1000;
@@ -92,12 +107,15 @@ export function checkBet(
   ts: number,
   raceOpen: boolean,
   enforceLimits = BET_LIMITS_ENABLED,
+  enforceExclusion = SELF_EXCLUSION_ENABLED,
 ): CheckResult {
-  if (state.selfExcludedUntil && ts < state.selfExcludedUntil) {
-    return { ok: false, code: 'self_excluded', message: `自己排除中のため、${fmtDate(state.selfExcludedUntil)}まで投票できません。` };
-  }
-  if (state.breakUntil && ts < state.breakUntil) {
-    return { ok: false, code: 'on_break', message: `休止中のため、${fmtDate(state.breakUntil)}まで投票できません。` };
+  const r = activeRestriction(state, ts, enforceExclusion);
+  if (r) {
+    return {
+      ok: false,
+      code: r.code,
+      message: `${r.code === 'self_excluded' ? '自己排除中' : '休止中'}のため、${fmtDate(r.until)}まで投票できません。`,
+    };
   }
   if (!raceOpen) return { ok: false, code: 'race_closed', message: 'このレースの発売は締め切られました。' };
   if (!Number.isInteger(stake) || stake < 100 || stake % 100 !== 0) {

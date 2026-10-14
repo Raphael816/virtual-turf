@@ -1,6 +1,8 @@
 import { appendAudit, verifyAudit } from '../../core/audit';
 import {
   BET_LIMITS_ENABLED,
+  SELF_EXCLUSION_ENABLED,
+  activeRestriction,
   type Limits,
   changeLimits,
   effectiveLimits,
@@ -34,8 +36,9 @@ export function accountPage(): Page {
     const now = store.now();
     const lim = effectiveLimits(s, now);
     const pending = s.pendingLimits && s.pendingLimits.effectiveAt > now ? s.pendingLimits : null;
-    const onBreak = (s.breakUntil ?? 0) > now;
-    const excluded = (s.selfExcludedUntil ?? 0) > now;
+    const restriction = activeRestriction(s, now);
+    const onBreak = restriction?.code === 'on_break';
+    const excluded = restriction?.code === 'self_excluded';
     const p = store.prefs;
     const numField = (key: keyof Limits, label: string, step = 100) =>
       `<label class="field"><span>${label}</span><input type="number" min="0" step="${step}" name="${key}" value="${lim[key]}" inputmode="numeric"></label>`;
@@ -68,7 +71,9 @@ export function accountPage(): Page {
         </form>
       </section>
 
-      <section class="card" aria-labelledby="brk-h"><h2 id="brk-h">一時休止・自己排除</h2>
+      ${
+        SELF_EXCLUSION_ENABLED
+          ? `<section class="card" aria-labelledby="brk-h"><h2 id="brk-h">一時休止・自己排除</h2>
         ${onBreak ? `<p class="notice" style="margin-bottom:8px">休止中：${fmtDate(s.breakUntil!)} まで投票できません。</p>` : ''}
         ${excluded ? `<p class="notice" style="margin-bottom:8px">自己排除中：${fmtDate(s.selfExcludedUntil!)} まで投票できません。</p>` : ''}
         <p>期間中は観戦できますが、投票はできません。<b>設定した期間が終わるまで解除できません。</b></p>
@@ -81,7 +86,9 @@ export function accountPage(): Page {
           <button class="btn btn-danger" data-exclude="180">180日間の自己排除</button>
         </div>
         <p class="muted" style="font-size:.82rem;margin-top:8px">ギャンブルとの付き合い方に不安がある場合は、お住まいの地域の相談窓口にご相談ください。</p>
-      </section>
+      </section>`
+          : ''
+      }
 
       <section class="card" aria-labelledby="disp-h"><h2 id="disp-h">表示設定</h2>
         <form data-form="prefs" class="grid grid-2">

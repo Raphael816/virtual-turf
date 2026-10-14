@@ -7,6 +7,7 @@ import { type CommentaryLine, buildCommentary } from '../../core/commentary';
 import { runRace, verifyRace } from '../../core/meeting';
 import { type OddsBook, payout, popularity } from '../../core/pool';
 import { closeRace, currentOddsBook, finishRace } from '../../core/raceflow';
+import { activeRestriction } from '../../core/responsible';
 import { analyzeRace } from '../../core/analysis';
 import { PACE_LABEL, type SimResult, formatTime } from '../../core/sim';
 import { placeBet, quoteBet } from '../../core/state';
@@ -86,8 +87,8 @@ export function racePage(raceId: string): Page {
   const restriction = (): string | null => {
     const s = store.state;
     const now = store.now();
-    if ((s.selfExcludedUntil ?? 0) > now) return '自己排除の期間中のため、投票できません。';
-    if ((s.breakUntil ?? 0) > now) return '休止期間中のため、投票できません。';
+    const r = activeRestriction(s, now);
+    if (r) return r.code === 'self_excluded' ? '自己排除の期間中のため、投票できません。' : '休止期間中のため、投票できません。';
     return null;
   };
 

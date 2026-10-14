@@ -25,6 +25,7 @@ import {
 } from '../src/core/raceflow';
 import {
   BET_LIMITS_ENABLED,
+  SELF_EXCLUSION_ENABLED,
   DAY,
   HOUR,
   LIMIT_INCREASE_DELAY_MS,
@@ -200,7 +201,13 @@ describe('責任ある利用', () => {
     expect(checkBet(s, 'r1', s.balance, T0, true)).toEqual({ ok: true });
     expect(checkBet(s, 'r1', s.balance + 100, T0, true)).toMatchObject({ ok: false, code: 'balance' });
     expect(checkBet(s, 'r1', 150, T0, true)).toMatchObject({ ok: false, code: 'min_unit' });
-    expect(checkBet(startBreak(s, 24, T0), 'r1', 100, T0, true)).toMatchObject({ ok: false, code: 'on_break' });
+  });
+
+  it('デモ設定では休止・自己排除を適用しない（保存済みの期限があっても投票できる）', () => {
+    expect(SELF_EXCLUSION_ENABLED).toBe(false);
+    expect(checkBet(startBreak(s, 168, T0), 'r1', 100, T0, true)).toEqual({ ok: true });
+    expect(checkBet(selfExclude(s, 180, T0), 'r1', 100, T0, true)).toEqual({ ok: true });
+    expect(canRefill({ ...startBreak(s, 24, T0), balance: 0 }, T0)).toBe(true);
   });
 
   it('未確定の投票も損失見込みに含めて、損失上限で止める（上限を有効にした場合）', async () => {
@@ -233,14 +240,14 @@ describe('責任ある利用', () => {
     expect(effectiveLimits(r.state, T0).perRace).toBe(s.limits.perRace);
   });
 
-  it('休止・自己排除中は投票できず、期間を短くすることもできない', () => {
+  it('休止・自己排除を有効にした場合は投票できず、期間を短くすることもできない', () => {
     const b = startBreak(s, 24, T0);
-    expect(checkBet(b, 'r', 100, T0 + HOUR, true)).toMatchObject({ ok: false, code: 'on_break' });
-    expect(checkBet(b, 'r', 100, T0 + 25 * HOUR, true)).toEqual({ ok: true });
+    expect(checkBet(b, 'r', 100, T0 + HOUR, true, false, true)).toMatchObject({ ok: false, code: 'on_break' });
+    expect(checkBet(b, 'r', 100, T0 + 25 * HOUR, true, false, true)).toEqual({ ok: true });
     expect(startBreak(b, 1, T0).breakUntil).toBe(b.breakUntil);
 
     const x = selfExclude(s, 30, T0);
-    expect(checkBet(x, 'r', 100, T0 + 29 * DAY, true)).toMatchObject({ ok: false, code: 'self_excluded' });
+    expect(checkBet(x, 'r', 100, T0 + 29 * DAY, true, false, true)).toMatchObject({ ok: false, code: 'self_excluded' });
     expect(() => selfExclude(s, 7, T0)).toThrow();
   });
 });
@@ -344,7 +351,6 @@ describe('台帳・投票・払戻', () => {
     const r = await refill(s, T0);
     expect(r.balance).toBe(500 + REFILL_AMOUNT);
     expect(canRefill({ ...r, balance: 0 }, T0 + HOUR)).toBe(false);
-    expect(canRefill(startBreak(s, 24, T0), T0)).toBe(false);
   });
 });
 
