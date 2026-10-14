@@ -189,15 +189,24 @@ input[type='number'], input[type='text'], select {
 .stage { position: relative; aspect-ratio: 16 / 9; background: #0e1d14; border-radius: var(--radius); overflow: hidden; border: 1px solid var(--border); }
 .stage .viewer-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 .ov { position: absolute; z-index: 2; pointer-events: none; font-variant-numeric: tabular-nums; }
-.ov-tl { top: 8px; left: 8px; }
-.ov-tr { top: 8px; right: 8px; text-align: right; }
+/* 中継風の控えめな表示：上端の細い帯、残り600mからのロワーサード、下端の小さな順位帯 */
+.ov-tl { top: 6px; left: 6px; }
+.ov-tr { top: 6px; right: 6px; text-align: right; }
 .ov-bottom { left: 0; right: 0; bottom: 0; }
-.ov-box { background: rgba(6, 14, 22, .78); border-radius: 6px; padding: 4px 8px; font-size: .8rem; line-height: 1.35; }
-.ov-box b { font-size: 1rem; }
-.ov-center { inset: 0; display: grid; place-items: center; text-align: center; }
-.ov-center .ov-box { font-size: 1rem; padding: 12px 18px; }
-.ticker { display: flex; gap: 4px; overflow: hidden; padding: 6px 8px; background: linear-gradient(transparent, rgba(6,14,22,.88) 40%); }
-.ticker .num { font-size: .78rem; }
+.ov-box { background: rgba(8, 14, 20, .58); backdrop-filter: blur(2px); border-left: 2px solid var(--turf); border-radius: 2px; padding: 3px 8px; font-size: .74rem; line-height: 1.3; letter-spacing: .02em; }
+.ov-tr .ov-box { border-left: 0; border-right: 2px solid var(--turf); }
+.ov-box b { font-size: .92rem; font-weight: 700; }
+.ov-sub { margin-left: 8px; opacity: .85; }
+.ov-lower { left: 6px; bottom: 30px; }
+.lower-third { display: flex; flex-direction: column; gap: 2px; background: rgba(8, 14, 20, .62); border-left: 2px solid var(--turf); padding: 4px 8px; font-size: .74rem; }
+.lt-title { font-weight: 700; font-size: .7rem; opacity: .8; }
+.lt-row { display: flex; align-items: center; gap: 6px; }
+.lt-rank { width: 1em; text-align: right; font-weight: 700; opacity: .9; }
+.lt-row .num { font-size: .66rem; min-width: 1.6em; height: 1.6em; }
+.lt-name { white-space: nowrap; }
+@media (max-width: 480px) { .ov-lower { bottom: 24px; } .lower-third { font-size: .6rem; padding: 2px 6px; } .lt-row .num { font-size: .56rem; } .ov-box { font-size: .64rem; padding: 2px 6px; } .ov-box b { font-size: .78rem; } }
+.ticker { display: flex; gap: 3px; overflow: hidden; padding: 4px 6px; background: linear-gradient(transparent, rgba(6,14,22,.7) 50%); }
+.ticker .num { font-size: .66rem; min-width: 1.6em; height: 1.6em; opacity: .92; }
 .progress { height: 4px; background: rgba(255,255,255,.12); }
 .progress > i { display: block; height: 100%; background: var(--turf); width: 0; }
 
