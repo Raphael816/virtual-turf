@@ -8,7 +8,7 @@ import { type AuditEntry, appendAudit } from './audit';
 import { BET_TYPE_BY_ID, type BetTypeId, betKey, validateSelection } from './bettypes';
 import { type OddsBook, payout } from './pool';
 import type { MeetingState } from './raceflow';
-import { type CheckResult, DEFAULT_LIMITS, type Limits, checkBet, dayKey } from './responsible';
+import { type CheckResult, DEFAULT_LIMITS, type Limits, activeRestriction, checkBet, dayKey } from './responsible';
 
 export const SCHEMA_VERSION = 1;
 export const INITIAL_GRANT = 10_000;
@@ -216,7 +216,7 @@ export async function settleRace(
 export function canRefill(state: AppState, ts: number): boolean {
   if (state.balance >= REFILL_THRESHOLD) return false;
   if (state.lastRefillDay === dayKey(ts)) return false;
-  if ((state.breakUntil ?? 0) > ts || (state.selfExcludedUntil ?? 0) > ts) return false;
+  if (activeRestriction(state, ts)) return false;
   return true;
 }
 

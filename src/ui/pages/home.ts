@@ -1,4 +1,4 @@
-import { BET_LIMITS_ENABLED, dayStats, effectiveLimits } from '../../core/responsible';
+import { BET_LIMITS_ENABLED, activeRestriction, dayStats, effectiveLimits } from '../../core/responsible';
 import { TRACK_NAME } from '../../data/roster';
 import {
   type Page,
@@ -23,7 +23,7 @@ export function homePage(): Page {
     const lim = effectiveLimits(s, now);
     const next = nextOpenRace();
     const isNew = s.tickets.length === 0;
-    const restricted = (s.breakUntil ?? 0) > now || (s.selfExcludedUntil ?? 0) > now;
+    const restricted = activeRestriction(s, now) !== null;
 
     el.innerHTML = `
       <h1 class="sr-only">Virtual Turf トップ</h1>
