@@ -11,6 +11,7 @@ import { PACE_LABEL, type SimResult, formatTime } from '../../core/sim';
 import { placeBet, quoteBet } from '../../core/state';
 import { STYLE_LABEL } from '../../data/roster';
 import { createViewer } from '../../render';
+import { Viewer2D } from '../../render/viewer2d';
 import { Playback, gateFrames } from '../../render/playback';
 import { CAMERA_LABEL, type CameraMode, type RaceViewer } from '../../render/types';
 import {
@@ -342,20 +343,55 @@ export function racePage(raceId: string): Page {
         <div class="seg" role="group" aria-label="再生速度">${[1, 2, 4].map((v) => `<button type="button" data-speed="${v}" aria-pressed="${playback!.speed === v}">${v}x</button>`).join('')}</div>
         <input type="range" min="0" max="${playback.duration.toFixed(1)}" step="0.1" value="${playback.time.toFixed(1)}" data-seek aria-label="再生位置" style="flex:1;min-width:120px">`;
     }
+    const view = store.prefs.viewer;
+    const quality = store.prefs.quality;
+    const viewSel = `<div class="seg" role="group" aria-label="映像の種類">${(['3d', '2d'] as const)
+      .map((v) => `<button type="button" data-view="${v}" aria-pressed="${view === v}">${v === '3d' ? '3D' : '2D'}</button>`)
+      .join('')}</div>`;
+    const qualitySel =
+      viewer?.kind === '3d'
+        ? `<label class="sr-only" for="quality-sel">画質</label><select id="quality-sel" data-quality style="width:auto;min-height:36px">${(
+            [['auto', '画質: 自動'], ['low', '画質: 低'], ['medium', '画質: 中'], ['high', '画質: 高']] as const
+          )
+            .map(([q, l]) => `<option value="${q}" ${q === quality ? 'selected' : ''}>${l}</option>`)
+            .join('')}</select>`
+        : '';
+    const note = view === '3d' && viewer?.kind === '2d' ? '<span class="muted" style="font-size:.8rem">3D非対応のため2D表示</span>' : '';
     return `<div class="seg" role="group" aria-label="カメラ">${cams}</div>${follow}${extra}
-      <span class="muted" style="font-size:.8rem;margin-left:auto">${viewer?.kind === '3d' ? '3D' : '2D 上空図'}</span>`;
+      <span style="display:flex;gap:8px;align-items:center;margin-left:auto">${note}${viewSel}${qualitySel}</span>`;
   };
 
-  const mountViewer = () => {
+  let mountToken = 0;
+  /** 映像を（再）作成する。3D に失敗したら 2D 上空図に切り替える */
+  const mountViewer = async (force2d = false) => {
     const stage = el.querySelector<HTMLElement>('[data-stage]');
     if (!stage) return;
+    const token = ++mountToken;
     viewer?.dispose();
-    viewer = createViewer(store.prefs.viewer);
-    viewer.mount(stage);
+    viewer = null;
+    const prefs = force2d ? { ...store.prefs, viewer: '2d' as const } : store.prefs;
+    let v = await createViewer(prefs, {
+      onFail: () => {
+        toast('3D表示を続けられないため、2D上空図に切り替えました。', 'warn');
+        void mountViewer(true);
+      },
+    });
+    if (token !== mountToken || !el.isConnected) return v.dispose();
+    try {
+      v.mount(stage);
+    } catch (e) {
+      console.warn(e);
+      v.dispose();
+      v = new Viewer2D();
+      v.mount(stage);
+      toast('3D表示を開始できなかったため、2D上空図で表示しています。', 'warn');
+    }
+    viewer = v;
     viewer.setRace(card, ensureResult());
     viewer.setCamera?.(camera, followIndex);
     resizeObs.disconnect();
     resizeObs.observe(stage);
+    $(el, '[data-controls]').innerHTML = controlsHtml();
   };
 
   const frame = (wall: number) => {
@@ -499,8 +535,8 @@ export function racePage(raceId: string): Page {
         </div>
         <aside class="race-side" data-side aria-label="投票"></aside>
       </div>`;
-    mountViewer();
     renderPanels();
+    void mountViewer();
   };
 
   // ---- 操作 ----
@@ -589,6 +625,15 @@ export function racePage(raceId: string): Page {
       $(el, '[data-controls]').innerHTML = controlsHtml();
       return;
     }
+    const viewBtn = t.closest<HTMLElement>('[data-view]');
+    if (viewBtn) {
+      const v = viewBtn.dataset.view as '3d' | '2d';
+      if (v !== store.prefs.viewer) {
+        store.setPrefs({ viewer: v });
+        void mountViewer();
+      }
+      return;
+    }
     if (t.closest('[data-close-now]')) {
       store.set(await closeRace(store.state, card.id, store.probsSync(card), store.now()));
       return;
@@ -631,6 +676,12 @@ export function racePage(raceId: string): Page {
 
   const onChange = (ev: Event) => {
     const t = ev.target as HTMLSelectElement;
+    if (t.matches('[data-quality]')) {
+      const q = t.value as 'auto' | 'low' | 'medium' | 'high';
+      store.setPrefs({ quality: q });
+      viewer?.setQuality?.(q);
+      return;
+    }
     if (t.matches('[data-follow]')) {
       followIndex = Number(t.value);
       if (camera !== 'follow') camera = 'follow';
@@ -702,6 +753,7 @@ export function racePage(raceId: string): Page {
       }
     },
     dispose() {
+      mountToken++;
       cancelAnimationFrame(raf);
       resizeObs.disconnect();
       viewer?.dispose();

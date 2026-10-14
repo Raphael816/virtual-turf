@@ -32,6 +32,7 @@ export interface RaceViewer {
   setRace(card: RaceCard, result: SimResult | null): void;
   render(time: number, horses: HorseFrame[]): void;
   setCamera?(mode: CameraMode, followIndex?: number): void;
+  setQuality?(q: 'auto' | 'low' | 'medium' | 'high'): void;
   resize(): void;
   dispose(): void;
 }
