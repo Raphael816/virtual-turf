@@ -1,5 +1,7 @@
 # Virtual Turf（仮称）
 
+**▶ デモ：https://raphael816.github.io/virtual-turf/**
+
 架空の競走馬・騎手・競馬場で遊ぶ **競馬シミュレーション（デモ）** です。
 レース前に馬とオッズを検討して **デモコイン** で投票し、3Dのスポーツ中継風の映像で観戦し、結果・勝因・収支を振り返ります。
 
@@ -37,14 +39,10 @@ npm test           # Vitest（62件）
 npm run build      # 型チェック + 本番ビルド（dist/）
 ```
 
-### GitHub Pages で公開する
+### GitHub Pages での公開
 
-`.github/workflows/pages.yml` を用意済みです。非公開リポジトリの Pages 公開には GitHub の有料プランが必要なため、初期状態ではスキップされます。
-
-1. リポジトリを公開するか、Pages に対応したプランにする
-2. Settings → Pages → Source を **GitHub Actions** にする
-3. Settings → Secrets and variables → Actions → Variables に `ENABLE_PAGES` = `true` を追加する
-4. main への push（または Actions から手動実行）でデプロイされる
+main に push すると `.github/workflows/pages.yml` がテスト・ビルドを行い、GitHub Pages にデプロイします（リポジトリ変数 `ENABLE_PAGES=true` で有効化済み）。
+データは利用者のブラウザ内（localStorage）にのみ保存され、サーバーには送信されません。
 
 ## ロードマップ（ステップ実装）
 
