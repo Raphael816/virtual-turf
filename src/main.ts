@@ -1,5 +1,5 @@
 import './ui/styles.css';
-import { dayStats, effectiveLimits, reminderDue, startBreak } from './core/responsible';
+import { BET_LIMITS_ENABLED, dayStats, effectiveLimits, reminderDue, startBreak } from './core/responsible';
 import { type Page, ICONS } from './ui/common';
 import { accountPage } from './ui/pages/account';
 import { guidePage } from './ui/pages/guide';
@@ -155,7 +155,7 @@ function responsibleChecks(): void {
   }
   const st = dayStats(s, now);
   const key = new Date(now).toDateString();
-  if (lossNotifiedDay !== key && -st.settledNet >= lim.dailyLoss * 0.8) {
+  if (BET_LIMITS_ENABLED && lossNotifiedDay !== key && -st.settledNet >= lim.dailyLoss * 0.8) {
     lossNotifiedDay = key;
     toast(`本日の損失が上限（${coins(lim.dailyLoss)}コイン）の80%に達しました。`, 'warn');
   }

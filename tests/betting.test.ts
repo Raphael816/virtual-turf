@@ -24,6 +24,7 @@ import {
   raceStatus,
 } from '../src/core/raceflow';
 import {
+  BET_LIMITS_ENABLED,
   DAY,
   HOUR,
   LIMIT_INCREASE_DELAY_MS,
@@ -188,12 +189,21 @@ describe('責任ある利用', () => {
   it('100コイン単位・残高・1レース上限・1日上限をチェックする', () => {
     expect(checkBet(s, 'r1', 150, T0, true)).toMatchObject({ ok: false, code: 'min_unit' });
     expect(checkBet(s, 'r1', 100, T0, false)).toMatchObject({ ok: false, code: 'race_closed' });
-    expect(checkBet(s, 'r1', s.limits.perRace + 100, T0, true)).toMatchObject({ ok: false, code: 'per_race' });
+    expect(checkBet(s, 'r1', s.limits.perRace + 100, T0, true, true)).toMatchObject({ ok: false, code: 'per_race' });
     expect(checkBet({ ...s, balance: 50 }, 'r1', 100, T0, true)).toMatchObject({ ok: false, code: 'balance' });
     expect(checkBet(s, 'r1', 1000, T0, true)).toEqual({ ok: true });
   });
 
-  it('未確定の投票も損失見込みに含めて、損失上限で止める', async () => {
+  it('デモ設定では投票上限を適用しない（残高・100コイン単位・締切・休止は適用する）', () => {
+    expect(BET_LIMITS_ENABLED).toBe(false);
+    expect(checkBet(s, 'r1', s.limits.perRace + 100, T0, true)).toEqual({ ok: true });
+    expect(checkBet(s, 'r1', s.balance, T0, true)).toEqual({ ok: true });
+    expect(checkBet(s, 'r1', s.balance + 100, T0, true)).toMatchObject({ ok: false, code: 'balance' });
+    expect(checkBet(s, 'r1', 150, T0, true)).toMatchObject({ ok: false, code: 'min_unit' });
+    expect(checkBet(startBreak(s, 24, T0), 'r1', 100, T0, true)).toMatchObject({ ok: false, code: 'on_break' });
+  });
+
+  it('未確定の投票も損失見込みに含めて、損失上限で止める（上限を有効にした場合）', async () => {
     let st = s;
     const numbers = card.entries.map((e) => e.number);
     const book = currentOddsBook(await openMeeting(st, 'm', cards, T0), card, probs, T0);
@@ -202,7 +212,7 @@ describe('責任ある利用', () => {
       expect(r.ok).toBe(true);
       if (r.ok) st = r.state;
     }
-    expect(checkBet(st, 'c', 100, T0, true)).toMatchObject({ ok: false, code: 'daily_loss' });
+    expect(checkBet(st, 'c', 100, T0, true, true)).toMatchObject({ ok: false, code: 'daily_loss' });
   });
 
   it('上限の引き下げは即時、引き上げは24時間後に反映', () => {

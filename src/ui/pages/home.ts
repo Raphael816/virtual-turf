@@ -1,4 +1,4 @@
-import { dayStats, effectiveLimits } from '../../core/responsible';
+import { BET_LIMITS_ENABLED, dayStats, effectiveLimits } from '../../core/responsible';
 import { TRACK_NAME } from '../../data/roster';
 import {
   type Page,
@@ -47,8 +47,13 @@ export function homePage(): Page {
           <div class="grid grid-2">
             <div class="stat"><span class="label">残高</span><span class="value">${coins(s.balance)}</span></div>
             <div class="stat"><span class="label">本日の収支（確定分）</span><span class="value ${signClass(st.settledNet)}">${signed(st.settledNet)}</span></div>
-            <div class="stat"><span class="label">本日の投票額 / 上限</span><span class="value" style="font-size:1rem">${coins(st.staked)} / ${coins(lim.daily)}</span></div>
-            <div class="stat"><span class="label">1レースの上限</span><span class="value" style="font-size:1rem">${coins(lim.perRace)}</span></div>
+            ${
+              BET_LIMITS_ENABLED
+                ? `<div class="stat"><span class="label">本日の投票額 / 上限</span><span class="value" style="font-size:1rem">${coins(st.staked)} / ${coins(lim.daily)}</span></div>
+                   <div class="stat"><span class="label">1レースの上限</span><span class="value" style="font-size:1rem">${coins(lim.perRace)}</span></div>`
+                : `<div class="stat"><span class="label">本日の投票額</span><span class="value" style="font-size:1rem">${coins(st.staked)}</span></div>
+                   <div class="stat"><span class="label">投票上限</span><span class="value" style="font-size:1rem">なし</span></div>`
+            }
           </div>
           <p class="muted" style="margin:12px 0 0;font-size:.85rem">デモコインに金銭的な価値はなく、購入も換金もできません。</p>
         </div>

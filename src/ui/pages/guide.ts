@@ -1,6 +1,6 @@
 import { BET_TYPES } from '../../core/bettypes';
 import { CLOSE_INTERVAL_MS, FIRST_CLOSE_MS } from '../../core/raceflow';
-import { DEFAULT_LIMITS } from '../../core/responsible';
+import { BET_LIMITS_ENABLED, DEFAULT_LIMITS } from '../../core/responsible';
 import { INITIAL_GRANT, REFILL_AMOUNT, REFILL_THRESHOLD } from '../../core/state';
 import type { Page } from '../common';
 import { coins, prefersReducedMotion } from '../util';
@@ -96,8 +96,12 @@ export function guidePage(): Page {
 
         <section class="card" id="g-rg"><h2>責任ある利用</h2>
           <ul>
-            <li>投票上限（初期値）：1レース ${coins(DEFAULT_LIMITS.perRace)}／1日 ${coins(DEFAULT_LIMITS.daily)}コイン、1日の損失上限 ${coins(DEFAULT_LIMITS.dailyLoss)}コイン。</li>
-            <li>上限の引き下げはすぐに、引き上げは24時間後に反映されます。</li>
+            ${
+              BET_LIMITS_ENABLED
+                ? `<li>投票上限（初期値）：1レース ${coins(DEFAULT_LIMITS.perRace)}／1日 ${coins(DEFAULT_LIMITS.daily)}コイン、1日の損失上限 ${coins(DEFAULT_LIMITS.dailyLoss)}コイン。</li>
+                   <li>上限の引き下げはすぐに、引き上げは24時間後に反映されます。</li>`
+                : '<li>投票上限（1レース・1日・損失）は、現在デモ設定でオフにしています。残高の範囲で自由に投票できます。</li>'
+            }
             <li>${DEFAULT_LIMITS.sessionReminderMin}分ごとに利用時間と収支をお知らせします。</li>
             <li>24時間・7日の一時休止、30日以上の自己排除を設定できます（期間中は解除できません）。</li>
           </ul>
