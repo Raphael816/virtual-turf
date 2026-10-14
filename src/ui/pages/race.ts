@@ -341,9 +341,9 @@ export function racePage(raceId: string): Page {
 
   const stageHtml = () => `
     <div class="stage" data-stage>
-      <div class="ov ov-tl"><div class="ov-box"><b>${card.no}R</b> ${esc(card.name)}<br>${card.conditions.surface === 'turf' ? '芝' : 'ダート'}${card.conditions.distance}m</div></div>
+      <div class="ov ov-tl"><div class="ov-box"><b>${card.no}R</b> ${esc(card.name)}<span class="ov-sub">${card.conditions.surface === 'turf' ? '芝' : 'ダ'}${card.conditions.distance}m</span></div></div>
       <div class="ov ov-tr"><div class="ov-box" data-ov-tr></div></div>
-      <div class="ov ov-center" data-ov-center></div>
+      <div class="ov ov-lower" data-ov-lower aria-hidden="true"></div>
       <div class="ov ov-bottom"><div class="ticker" data-ticker aria-hidden="true"></div><div class="progress"><i data-progress></i></div></div>
     </div>
     <div class="stage-controls" data-controls></div>
@@ -436,30 +436,38 @@ export function racePage(raceId: string): Page {
 
   const updateOverlay = (st: ReturnType<typeof statusOf>, t: number, horses: ReturnType<typeof gateFrames>) => {
     const tr = el.querySelector('[data-ov-tr]');
-    const center = el.querySelector('[data-ov-center]');
+    const lower = el.querySelector('[data-ov-lower]');
     const ticker = el.querySelector('[data-ticker]');
     const prog = el.querySelector<HTMLElement>('[data-progress]');
-    if (!tr || !center || !ticker || !prog) return;
+    if (!tr || !lower || !ticker || !prog) return;
     const rt = runtimeOf(card);
     const D = card.conditions.distance;
     if (st === 'open') {
       tr.innerHTML = `締切まで <b>${countdown(rt.closesAt - store.now())}</b>`;
-      center.innerHTML = '';
+      lower.innerHTML = '';
       ticker.innerHTML = `<span class="ov-box">発売中 — 締切後にゲートインします</span>`;
     } else if (st === 'closed') {
       tr.innerHTML = rt.startsAt ? `発走まで <b>${countdown(rt.startsAt - store.now())}</b>` : '締切';
-      center.innerHTML = '';
+      lower.innerHTML = '';
       ticker.innerHTML = `<span class="ov-box">ゲートイン中…まもなく発走</span>`;
     } else if (playback) {
       const rem = playback.leaderRemaining(horses);
-      tr.innerHTML = `${rem > 0 ? `残り <b>${Math.ceil(rem)}m</b>` : '<b>ゴール</b>'}<br><span class="tnum">${formatTime(t)}</span>`;
-      center.innerHTML =
-        st === 'finished' && playback.time >= playback.duration - 0.05
-          ? `<div class="ov-box">確定<br>${result!.order
-              .slice(0, 3)
-              .map((i, r) => `${r + 1}着 ${numBadge(card.entries[i].number, card.entries[i].frame)} ${esc(horseOf(card.entries[i]).name)}`)
-              .join('<br>')}</div>`
-          : '';
+      tr.innerHTML = `${rem > 0 ? `残り <b>${Math.ceil(rem)}m</b>` : '<b>ゴール</b>'}<span class="ov-sub tnum">${formatTime(t)}</span>`;
+      // 中継のロワーサード：残り600mから上位3頭の馬名、確定後は着順（映像の中央は空ける）
+      const final = st === 'finished' && playback.time >= playback.duration - 0.05;
+      if (final) {
+        lower.innerHTML = `<div class="lower-third"><span class="lt-title">確定</span>${result!.order
+          .slice(0, 3)
+          .map((i, r) => `<span class="lt-row"><span class="lt-rank">${r + 1}</span>${numBadge(card.entries[i].number, card.entries[i].frame)}<span class="lt-name">${esc(horseOf(card.entries[i]).name)}</span></span>`)
+          .join('')}</div>`;
+      } else if (rem < 600 && rem > 0) {
+        const top = [...horses].sort((a, b) => a.rank - b.rank).slice(0, 3);
+        lower.innerHTML = `<div class="lower-third">${top
+          .map((h, r) => `<span class="lt-row"><span class="lt-rank">${r + 1}</span>${numBadge(h.number, h.frame)}<span class="lt-name">${esc(horseOf(card.entries[h.index]).name)}</span></span>`)
+          .join('')}</div>`;
+      } else {
+        lower.innerHTML = '';
+      }
       prog.style.width = `${Math.min(100, ((D - rem) / D) * 100)}%`;
     }
     const ranked = [...horses].sort((a, b) => a.rank - b.rank);
