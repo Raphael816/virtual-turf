@@ -8,7 +8,8 @@
 import { type RaceCard, createMeeting } from '../core/meeting';
 import { type Probabilities, estimateProbabilities } from '../core/probability';
 import { advance, openMeeting } from '../core/raceflow';
-import { type AppState, createInitialState } from '../core/state';
+import { ENGINE_VERSION } from '../core/sim';
+import { type AppState, createInitialState, refundRaces } from '../core/state';
 import { type KV, clearState, defaultKV, loadState, saveState } from '../core/storage';
 import { prefersReducedMotion } from './util';
 
@@ -36,6 +37,8 @@ class Store {
   private busy = false;
   readonly sessionStart = Date.now();
   lastReminder: number | null = null;
+  /** 起動時にエンジン更新で開催を作り直したか（お知らせ表示用） */
+  engineMigrated = false;
 
   constructor() {
     this.kv = defaultKV();
@@ -54,6 +57,14 @@ class Store {
 
   async init(): Promise<void> {
     this.state = loadState(this.kv) ?? (await createInitialState(this.now()));
+    // シミュレーションのエンジンが更新された場合、保存済みの開催は同じ結果で再現できないため、
+    // 未確定の券を返還して新しい開催にする
+    const m = this.state.meeting;
+    if (m && m.cards.some((c) => c.engineVersion !== ENGINE_VERSION)) {
+      this.state = await refundRaces(this.state, m.cards.map((c) => c.id), this.now(), `engine ${m.cards[0].engineVersion} → ${ENGINE_VERSION}`);
+      this.state = { ...this.state, meeting: undefined };
+      this.engineMigrated = true;
+    }
     if (!this.state.meeting) await this.newMeeting(false);
     await this.tick();
     this.save();

@@ -16,7 +16,8 @@ export type AuditType =
   | 'limits_change'
   | 'break'
   | 'self_exclusion'
-  | 'refill';
+  | 'refill'
+  | 'refund';
 
 export interface AuditEntry {
   seq: number;

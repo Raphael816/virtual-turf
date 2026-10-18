@@ -82,7 +82,7 @@ export class DustSystem {
       this.vel[k] *= 1 - 1.4 * dt;
       this.vel[k + 2] *= 1 - 1.4 * dt;
       this.pos[k] += this.vel[k] * dt;
-      this.pos[k + 1] = Math.max(0.1, this.pos[k + 1] + this.vel[k + 1] * dt);
+      this.pos[k + 1] = this.pos[k + 1] + this.vel[k + 1] * dt;
       this.pos[k + 2] += this.vel[k + 2] * dt;
       const t = this.life[i] / this.maxLife[i];
       // 出始めは素早く濃くなり、ゆっくり薄れる
@@ -111,6 +111,7 @@ export class ClodSystem {
   private vel: Float32Array;
   private rot: Float32Array;
   private life: Float32Array;
+  private ground: Float32Array;
   private next = 0;
   private m = new THREE.Matrix4();
   private q = new THREE.Quaternion();
@@ -127,6 +128,7 @@ export class ClodSystem {
     this.vel = new Float32Array(capacity * 3);
     this.rot = new Float32Array(capacity);
     this.life = new Float32Array(capacity);
+    this.ground = new Float32Array(capacity);
     const zero = new THREE.Matrix4().makeScale(0, 0, 0);
     const c = new THREE.Color('#555');
     for (let i = 0; i < capacity; i++) {
@@ -135,10 +137,11 @@ export class ClodSystem {
     }
   }
 
-  emit(x: number, z: number, vx: number, vy: number, vz: number, c: THREE.Color) {
+  emit(x: number, y: number, z: number, vx: number, vy: number, vz: number, c: THREE.Color) {
     const i = this.next;
     this.next = (this.next + 1) % this.capacity;
-    this.pos.set([x, 0.08, z], i * 3);
+    this.pos.set([x, y + 0.08, z], i * 3);
+    this.ground[i] = y;
     this.vel.set([vx, vy, vz], i * 3);
     this.rot[i] = Math.random() * 6;
     this.life[i] = 0.9;
@@ -155,8 +158,8 @@ export class ClodSystem {
       this.pos[k] += this.vel[k] * dt;
       this.pos[k + 1] += this.vel[k + 1] * dt;
       this.pos[k + 2] += this.vel[k + 2] * dt;
-      if (this.pos[k + 1] < 0.04) {
-        this.pos[k + 1] = 0.04;
+      if (this.pos[k + 1] < this.ground[i] + 0.04) {
+        this.pos[k + 1] = this.ground[i] + 0.04;
         this.vel[k] = this.vel[k + 1] = this.vel[k + 2] = 0;
       }
       this.rot[i] += dt * 8;
@@ -203,10 +206,10 @@ export class HoofPrints {
     }
   }
 
-  add(x: number, z: number, heading: number, opacity: number) {
+  add(x: number, y: number, z: number, heading: number, opacity: number) {
     const i = this.next;
     this.next = (this.next + 1) % this.capacity;
-    this.base[i].makeRotationY(-heading - Math.PI / 2).setPosition(x, 0.055, z);
+    this.base[i].makeRotationY(-heading - Math.PI / 2).setPosition(x, y + 0.055, z);
     this.age[i] = 0;
     this.mesh.setMatrixAt(i, this.base[i].clone().scale(new THREE.Vector3(opacity, 1, opacity)));
     this.mesh.instanceMatrix.needsUpdate = true;

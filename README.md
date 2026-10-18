@@ -30,6 +30,7 @@
 2. [実装方針と技術構成（シミュレーション・オッズ・3D・公正性・課題）](docs/02-architecture.md)
 3. [実際のお金での賭けを検討する前の確認事項](docs/03-legal-and-safety.md)
 4. [3D映像の品質改善（原因・改善内容・画質設定・素材の権利）](docs/04-visual-quality.md)
+5. [コース形状の出典と推定箇所（中山競馬場を参考にした非公式の再現）](docs/05-course-reference.md)
 
 ## 開発
 

@@ -45,6 +45,7 @@ import {
   quoteBet,
   raceSummaries,
   refill,
+  refundRaces,
   settleRace,
 } from '../src/core/state';
 import { loadState, memoryKV, saveState } from '../src/core/storage';
@@ -343,6 +344,25 @@ describe('台帳・投票・払戻', () => {
     const once = s.balance;
     s = await settleRace(s, 'r', { win: { '1': 2 }, place: {}, quinella: {}, exacta: {} }, T0);
     expect(s.balance).toBe(once);
+  });
+
+  it('エンジン更新時などに、未確定の券を返還できる（確定済みの券は変わらない）', async () => {
+    let s = await createInitialState(T0);
+    const numbers = [1, 2, 3];
+    const book = buildOddsBook(withStakes(emptyPools(), [{ betType: 'win', key: '1', stake: 1000 }]), numbers);
+    for (const race of ['a', 'b']) {
+      const r = await placeBet(s, { raceId: race, betType: 'win', selection: [1], stake: 300 }, numbers, book, T0, true);
+      if (!r.ok) throw new Error(r.message);
+      s = r.state;
+    }
+    s = await settleRace(s, 'a', { win: { '2': 3 }, place: {}, quinella: {}, exacta: {} }, T0);
+    const before = s.balance;
+    s = await refundRaces(s, ['a', 'b'], T0, 'test');
+    expect(s.balance).toBe(before + 300);
+    expect(s.tickets.find((t) => t.raceId === 'a')!.status).toBe('lost');
+    expect(s.tickets.find((t) => t.raceId === 'b')!.status).toBe('refunded');
+    expect(s.ledger.reduce((a, l) => a + l.amount, 0)).toBe(s.balance);
+    expect((await verifyAudit(s.audit)).ok).toBe(true);
   });
 
   it('補充は残高が少ないときに1日1回だけ', async () => {

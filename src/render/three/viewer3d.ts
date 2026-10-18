@@ -12,8 +12,8 @@
  */
 import * as THREE from 'three';
 import type { RaceCard } from '../../core/meeting';
-import type { SimResult } from '../../core/sim';
-import { COURSES, type Course, pointAt, raceU } from '../../core/track';
+import { type SimResult, courseShort } from '../../core/sim';
+import { COURSES, type Course, courseFor, pointAt, raceU } from '../../core/track';
 import { GATE_COLORS, HORSE_BY_ID } from '../../data/roster';
 import type { CameraMode, HorseFrame, RaceViewer } from '../types';
 import { CameraDirector, type DirectorHorse } from './camera';
@@ -103,7 +103,7 @@ export class Viewer3D implements RaceViewer {
   /** 開発時の確認用：カメラの状態 */
   debugInfo() {
     const c = this.camera;
-    return { shot: this.director.shot, fov: c.fov, pos: c.position.toArray().map((v) => Math.round(v)), focus: this.director.focus.toArray().map((v) => Math.round(v)), radius: this.director.subjectRadius, focusDistance: Math.round(this.director.focusDistance) };
+    return { shot: this.director.shot, fov: c.fov, pos: c.position.toArray().map((v) => Math.round(v)), focus: this.director.focus.toArray().map((v) => Math.round(v)), look: this.director.lookPoint.toArray().map((v) => Math.round(v)), radius: this.director.subjectRadius, focusDistance: Math.round(this.director.focusDistance) };
   }
 
   constructor(private opts: Viewer3DOptions) {
@@ -161,7 +161,7 @@ export class Viewer3D implements RaceViewer {
     if (this.card?.id === card.id && this.horses.length) return;
     this.card = card;
     const c = card.conditions;
-    this.course = COURSES[c.surface];
+    this.course = courseFor(c.surface, c.layout);
     this.horses.forEach((h) => {
       this.scene.remove(h.root);
       h.dispose();
@@ -177,7 +177,7 @@ export class Viewer3D implements RaceViewer {
       return m;
     });
     this.lateral = card.entries.map(() => 0);
-    this.env.applyConditions(c.weather, c.timeOfDay, c.going, [`${card.no}R ${card.name}`, `${c.surface === 'turf' ? '芝' : 'ダート'} ${c.distance}m`]);
+    this.env.applyConditions(c.weather, c.timeOfDay, c.going, [`${card.no}R ${card.name}`, courseShort(c)]);
     this.rain.setIntensity(c.weather === 'rain' ? 2 : c.weather === 'drizzle' ? 1 : 0);
     this.wet = c.going === 'soft' || c.going === 'heavy';
     if (c.surface === 'dirt') {
@@ -230,7 +230,7 @@ export class Viewer3D implements RaceViewer {
     g.traverse((o) => ((o as THREE.Mesh).castShadow = this.profile.shadows));
     const u0 = raceU(this.course, card.conditions.distance, 0);
     const p = pointAt(this.course, u0, 0);
-    g.position.set(p.x, 0, p.z);
+    g.position.set(p.x, p.y, p.z);
     g.rotation.y = -p.heading;
     this.gate = g;
     this.scene.add(g);
@@ -336,9 +336,9 @@ export class Viewer3D implements RaceViewer {
       const lane = f.lane + this.lateral[i];
       const p = pointAt(course, raceU(course, D, f.x), lane);
       const drive = f.finished ? 0 : Math.max(0, Math.min(1, (420 - (D - f.x)) / 200));
-      const landings = m.update(p.x, p.z, p.heading, f.v, dtRace, drive);
+      const landings = m.update(p.x, p.y, p.z, p.heading, p.grade, f.v, dtRace, drive);
       m.setHighlight(this.director.mode === 'follow' && i === this.followIndex);
-      inputs.push({ x: f.x, lane, wx: p.x, wz: p.z, heading: p.heading, rank: f.rank, finished: f.finished, v: f.v });
+      inputs.push({ x: f.x, lane, wx: p.x, wy: p.y, wz: p.z, heading: p.heading, rank: f.rank, finished: f.finished, v: f.v });
       if (dtRace > 0 && landings.length) this.groundFx(landings, p.heading, f.v, dirt);
     });
 
@@ -369,19 +369,19 @@ export class Viewer3D implements RaceViewer {
   }
 
   /** 蹄の着地に合わせて、砂煙・土くれ（芝の塊）・蹄跡を出す */
-  private groundFx(landings: { x: number; z: number; fore: boolean }[], heading: number, v: number, dirt: boolean) {
+  private groundFx(landings: { x: number; y: number; z: number; fore: boolean }[], heading: number, v: number, dirt: boolean) {
     const fx = Math.cos(heading);
     const fz = Math.sin(heading);
     const k = this.emitScale * Math.min(1, v / 15);
     for (const l of landings) {
-      this.prints.add(l.x, l.z, heading, dirt ? 1 : 0.55);
+      this.prints.add(l.x, l.y, l.z, heading, dirt ? 1 : 0.55);
       if (dirt) {
         const puffs = Math.round((this.wet ? 1 : 3) * k + Math.random());
         for (let q = 0; q < puffs; q++) {
           this.tmp.copy(this.dustColor).offsetHSL(0, 0, (Math.random() - 0.5) * 0.06);
           this.dust.emit(
             l.x - fx * 0.3 + (Math.random() - 0.5) * 0.3,
-            0.2,
+            l.y + 0.2,
             l.z - fz * 0.3 + (Math.random() - 0.5) * 0.3,
             -fx * v * 0.18 + (Math.random() - 0.5) * 1.2,
             0.6 + Math.random() * 1.2,
@@ -395,7 +395,7 @@ export class Viewer3D implements RaceViewer {
       const chunks = Math.round((dirt ? (this.wet ? 3 : 1) : l.fore ? 1 : 2) * k + Math.random() * 0.6);
       for (let q = 0; q < chunks; q++) {
         this.tmp.copy(this.clodColor).offsetHSL(0, 0, (Math.random() - 0.5) * 0.1);
-        this.clods.emit(l.x, l.z, -fx * (2 + Math.random() * 3) + (Math.random() - 0.5), 1.5 + Math.random() * 2.5, -fz * (2 + Math.random() * 3) + (Math.random() - 0.5), this.tmp);
+        this.clods.emit(l.x, l.y, l.z, -fx * (2 + Math.random() * 3) + (Math.random() - 0.5), 1.5 + Math.random() * 2.5, -fz * (2 + Math.random() * 3) + (Math.random() - 0.5), this.tmp);
       }
     }
   }

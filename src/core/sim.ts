@@ -6,9 +6,10 @@
  */
 import type { Grade, Horse, RunningStyle } from '../data/roster';
 import { Rng } from './rng';
-import { COURSES, type Surface, cornersOnRoute, isOnTurn, raceU } from './track';
+import { type Surface, cornersOnRoute, courseFor, curvatureAt, gradeAt, raceU } from './track';
 
-export const ENGINE_VERSION = 'sim-1.0.0';
+/** 2.0.0: 中山を参考にした右回りのコース・起伏（坂）の影響を導入 */
+export const ENGINE_VERSION = 'sim-2.0.0';
 
 export type Weather = 'sunny' | 'cloudy' | 'drizzle' | 'rain';
 export type Going = 'good' | 'yielding' | 'soft' | 'heavy';
@@ -19,8 +20,16 @@ export const GOING_LABEL: Record<Going, string> = { good: '良', yielding: '稍�
 export const TIME_LABEL: Record<TimeOfDay, string> = { day: 'デイ', dusk: '薄暮', night: 'ナイター' };
 export const SURFACE_LABEL: Record<Surface, string> = { turf: '芝', dirt: 'ダート' };
 
+/** 「芝外1600m」「ダ1800m」のような短い表記 */
+export function courseShort(c: Pick<RaceConditions, 'surface' | 'layout' | 'distance'>): string {
+  if (c.surface === 'dirt') return `ダ${c.distance}m`;
+  return `芝${c.layout === 'outer' ? '外' : c.layout === 'inner' ? '内' : ''}${c.distance}m`;
+}
+
 export interface RaceConditions {
   surface: Surface;
+  /** 芝の内回り／外回り（ダートでは無視） */
+  layout?: 'inner' | 'outer';
   distance: number;
   weather: Weather;
   going: Going;
@@ -105,7 +114,7 @@ export interface SimResult {
 const GRADE_SURFACE: Record<Grade, number> = { A: 0.1, B: 0, C: -0.2, D: -0.45 };
 const GRADE_HEAVY: Record<Grade, number> = { A: 0.1, B: 0, C: -0.12, D: -0.25 };
 export const GOING_INDEX: Record<Going, number> = { good: 0, yielding: 1, soft: 2, heavy: 3 };
-const SPURT_DIST: Record<RunningStyle, number> = { nige: 480, senko: 540, sashi: 600, oikomi: 650 };
+const SPURT_DIST: Record<RunningStyle, number> = { nige: 490, senko: 570, sashi: 660, oikomi: 680 };
 const GAP_FRAC: Record<RunningStyle, number> = { nige: 0, senko: 0.22, sashi: 0.52, oikomi: 0.85 };
 
 /** 1馬身 = 2.4m として、時間差を着差表記に変換 */
@@ -129,7 +138,7 @@ export function simulateRace(cond: RaceConditions, runners: SimRunner[], seed: s
   const dt = opts.dt ?? 0.1;
   const record = opts.record ?? true;
   const rng = new Rng(`${seed}|${ENGINE_VERSION}`);
-  const course = COURSES[cond.surface];
+  const course = courseFor(cond.surface, cond.layout);
   const n = runners.length;
   const D = cond.distance;
   const g = GOING_INDEX[cond.going];
@@ -180,6 +189,8 @@ export function simulateRace(cond: RaceConditions, runners: SimRunner[], seed: s
       kick,
       aStart: 4.5 + (h.accel / 100) * 1.5,
       aRun: 0.3 + (h.accel / 100) * 0.5,
+      // 上り坂での失速の受けやすさ（パワーがあるほど坂に強い）
+      hill: 1.5 - h.power / 100,
     };
   });
 
@@ -282,6 +293,8 @@ export function simulateRace(cond: RaceConditions, runners: SimRunner[], seed: s
       if (t < p.startDelay) continue;
 
       const rem = D - xPrev[i];
+      const uNow = raceU(course, D, xPrev[i]);
+      const grade = gradeAt(course, uNow);
       const fatigue = S[i] >= 0.3 ? 1 : 0.87 + 0.433 * S[i];
       const vMax = p.vTop * fatigue;
       const kakariActive = p.kakari && t >= p.kakariStart && t < p.kakariEnd;
@@ -295,7 +308,7 @@ export function simulateRace(cond: RaceConditions, runners: SimRunner[], seed: s
       let target: number;
       if (spurting[i]) {
         // 脚を溜めた馬ほど末脚が伸びる
-        target = vMax * (1 + p.kick + 0.035 * clamp(S[i] - 0.3, -0.3, 0.4));
+        target = vMax * (1 + p.kick + 0.045 * clamp(S[i] - 0.3, -0.3, 0.4));
       } else {
         const gapTarget = (gaveUp[i] ? 0.2 : p.gapFrac) * spread;
         const gap = leaderX - xPrev[i];
@@ -363,6 +376,9 @@ export function simulateRace(cond: RaceConditions, runners: SimRunner[], seed: s
         laneTarget[i] = Math.max(0.6, lanePrev[i] - 0.9); // 内ラチ沿いへ寄せる
       }
 
+      // 坂：上りは減速（パワーで軽減）、下りはわずかに加速
+      target *= 1 - 1.8 * Math.max(0, grade) * p.hill + 0.9 * Math.max(0, -grade);
+
       // 加減速
       if (v[i] < target) {
         const a = v[i] < 0.95 * paceRef ? p.aStart : p.aRun;
@@ -378,12 +394,13 @@ export function simulateRace(cond: RaceConditions, runners: SimRunner[], seed: s
       for (let k = 0; k < n; k++) {
         const dx = xPrev[k] - xPrev[i];
         if (k !== i && dx > 0.5 && dx < 4 && Math.abs(lanePrev[k] - lanePrev[i]) < 1.2) {
-          draft = 0.86;
+          draft = 0.84;
           break;
         }
       }
       const ratio = vEff / p.vTop;
-      S[i] = Math.max(0, S[i] - (drainK * ratio ** 4 * goingDrain * draft * (kakariActive ? 1.4 : 1) * dt) / p.staminaFactor);
+      const hillDrain = 1 + 6 * Math.max(0, grade) * p.hill;
+      S[i] = Math.max(0, S[i] - (drainK * ratio ** 4 * goingDrain * draft * hillDrain * (kakariActive ? 1.4 : 1) * dt) / p.staminaFactor);
       if (!flags.fade[i] && S[i] < 0.05 && rem > 200) {
         flags.fade[i] = true;
         events.push({ t, type: 'fade', runner: i });
@@ -391,8 +408,8 @@ export function simulateRace(cond: RaceConditions, runners: SimRunner[], seed: s
 
       // 横移動と前進（コーナーで外を回るほど進みが減る）
       lane[i] += clamp(laneTarget[i] - lane[i], -0.8 * dt, 0.8 * dt);
-      const onTurn = isOnTurn(course, raceU(course, D, xPrev[i]));
-      const progress = vEff * dt * (onTurn ? course.radius / (course.radius + lane[i]) : 1);
+      // コーナーで外を回るほど進みが減る（曲率 κ のとき 1/(1+κ·レーン)）
+      const progress = (vEff * dt) / (1 + curvatureAt(course, uNow) * lane[i]);
       laneLoss[i] += vEff * dt - progress;
       x[i] = xPrev[i] + progress;
 
@@ -453,7 +470,7 @@ export function simulateRace(cond: RaceConditions, runners: SimRunner[], seed: s
   const midSpeed = ((midEnd - 1) * 200) / (crossT[midEnd] - crossT[1]);
   const paceRatio = midSpeed / paceRef;
   // しきい値は多数のレースでの分布（おおよそ上位25% / 下位25%）から決めている
-  const pace: Pace = paceRatio >= 1.0 ? 'high' : paceRatio <= 0.99 ? 'slow' : 'middle';
+  const pace: Pace = paceRatio >= 1.0056 ? 'high' : paceRatio <= 0.9946 ? 'slow' : 'middle';
 
   const lastCorner = corners.filter((c) => c.order.length).at(-1);
   const factors: RunnerFactors[] = P.map((p, i) => ({

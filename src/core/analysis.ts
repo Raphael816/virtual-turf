@@ -73,6 +73,7 @@ export function analyzeRace(card: RaceCard, res: SimResult, favoriteNumber?: num
   if (f.laneLoss < avgLoss - 5) points.push(`内ラチ沿いを通り、コーナーでの距離ロスを最小限（約${f.laneLoss.toFixed(0)}m）に抑えました。`);
   else if (f.laneLoss > avgLoss + 8) points.push(`コーナーで外を回るロス（約${f.laneLoss.toFixed(0)}m）がありながらの勝利でした。`);
   if (going >= 2 && h.heavy === 'A') points.push(`${card.conditions.going === 'heavy' ? '不良' : '重'}馬場で、道悪適性Aを生かしました。`);
+  if (h.power >= 85) points.push('ゴール前の急坂でも、パワーを生かして脚色が鈍りませんでした。');
   if (Math.abs(D - h.bestDistance) <= 200) points.push(`最適距離（${h.bestDistance}m前後）に近い条件も合っていました。`);
   if (f.condition > 0.08) points.push('当日の調子も上向きでした（調子は毎レース少しずつ変動します）。');
 

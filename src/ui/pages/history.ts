@@ -41,6 +41,7 @@ export function historyPage(): Page {
     const totalPay = s.tickets.reduce((a, t) => a + (t.payout ?? 0), 0);
     const settled = s.tickets.filter((t) => t.status !== 'open');
     const hits = settled.filter((t) => t.status === 'won').length;
+    const judged = settled.filter((t) => t.status !== 'refunded');
     const today = dayStats(s, now);
     const name = (id: string) => esc(s.raceNames?.[id] ?? id);
 
@@ -50,7 +51,7 @@ export function historyPage(): Page {
         <div class="card stat"><span class="label">残高</span><span class="value">${coins(s.balance)}</span></div>
         <div class="card stat"><span class="label">通算収支（確定分）</span><span class="value ${signClass(totalPay - settled.reduce((a, t) => a + t.stake, 0))}">${signed(totalPay - settled.reduce((a, t) => a + t.stake, 0))}</span></div>
         <div class="card stat"><span class="label">本日の投票 / 収支</span><span class="value" style="font-size:1.05rem">${coins(today.staked)} / <span class="${signClass(today.settledNet)}">${signed(today.settledNet)}</span></span></div>
-        <div class="card stat"><span class="label">的中率</span><span class="value">${settled.length ? Math.round((hits / settled.length) * 100) : 0}%</span><small>${hits} / ${settled.length}件</small></div>
+        <div class="card stat"><span class="label">的中率</span><span class="value">${judged.length ? Math.round((hits / judged.length) * 100) : 0}%</span><small>${hits} / ${judged.length}件</small></div>
       </div>
       ${
         canRefill(s, now)
@@ -84,7 +85,7 @@ export function historyPage(): Page {
                 .map((t) => {
                   const type = BET_TYPE_BY_ID[t.betType];
                   const atBuy = t.rangeAtPurchase ? `${t.rangeAtPurchase[0]}–${t.rangeAtPurchase[1]}` : (t.oddsAtPurchase?.toFixed(1) ?? '—');
-                  const fin = t.status === 'won' ? t.finalOdds!.toFixed(1) : t.status === 'lost' ? '不的中' : '未確定';
+                  const fin = t.status === 'won' ? t.finalOdds!.toFixed(1) : t.status === 'lost' ? '不的中' : t.status === 'refunded' ? '返還' : '未確定';
                   return `<tr><td class="tnum">${dateTime(t.ts)}</td><td>${name(t.raceId)}</td><td>${type.label}</td>
                     <td>${t.selection.join(type.ordered ? '→' : '-')}</td><td class="r tnum">${coins(t.stake)}</td>
                     <td class="r tnum">${atBuy} → ${fin}</td><td class="r tnum ${t.status === 'won' ? 'pos' : ''}">${t.status === 'open' ? '—' : coins(t.payout ?? 0)}</td></tr>`;

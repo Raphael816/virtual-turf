@@ -121,6 +121,15 @@ export function buildCommentary(card: RaceCard, res: SimResult): CommentaryLine[
     });
   }
 
+  // ゴール前の急坂（残り180mから上り）
+  {
+    const t = leaderReaches(D - 180);
+    if (t !== null && D > 600) {
+      const o = orderAt(t);
+      lines.push({ t, text: say(`ゴール前の急坂！ ${name(o[0])}、坂を駆け上がる！`, `さあ急坂、${name(o[0])}が先頭で坂を上る！`), kind: 'pos', tag: 'mark' } as CommentaryLine & { tag: 'mark' });
+    }
+  }
+
   // ゴール前の叩き合い
   const [w, s2, s3] = res.order;
   const tight = ['ハナ', 'アタマ', 'クビ'].includes(res.margins[s2]);

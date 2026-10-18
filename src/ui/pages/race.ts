@@ -9,7 +9,7 @@ import { type OddsBook, payout, popularity } from '../../core/pool';
 import { closeRace, currentOddsBook, finishRace } from '../../core/raceflow';
 import { activeRestriction } from '../../core/responsible';
 import { analyzeRace } from '../../core/analysis';
-import { PACE_LABEL, type SimResult, formatTime } from '../../core/sim';
+import { PACE_LABEL, type SimResult, courseShort, formatTime } from '../../core/sim';
 import { placeBet, quoteBet } from '../../core/state';
 import { STYLE_LABEL } from '../../data/roster';
 import { createViewer } from '../../render';
@@ -181,7 +181,9 @@ export function racePage(raceId: string): Page {
             ? '<span class="chip chip-open">発売・未確定</span>'
             : t.status === 'won'
               ? `<span class="chip chip-open">的中 ${coins(t.payout!)}（${t.finalOdds!.toFixed(1)}倍）</span>`
-              : '<span class="chip chip-finished">不的中</span>';
+              : t.status === 'refunded'
+                ? '<span class="chip chip-finished">返還</span>'
+                : '<span class="chip chip-finished">不的中</span>';
         return `<li><time>${type.label}</time><span>${t.selection.join(type.ordered ? '→' : '-')}・${coins(t.stake)}コイン ${status}</span></li>`;
       })
       .join('')}</ul>`;
@@ -342,7 +344,7 @@ export function racePage(raceId: string): Page {
 
   const stageHtml = () => `
     <div class="stage" data-stage>
-      <div class="ov ov-tl"><div class="ov-box"><b>${card.no}R</b> ${esc(card.name)}<span class="ov-sub">${card.conditions.surface === 'turf' ? '芝' : 'ダ'}${card.conditions.distance}m</span></div></div>
+      <div class="ov ov-tl"><div class="ov-box"><b>${card.no}R</b> ${esc(card.name)}<span class="ov-sub">${courseShort(card.conditions)}</span></div></div>
       <div class="ov ov-tr"><div class="ov-box" data-ov-tr></div></div>
       <div class="ov ov-lower" data-ov-lower aria-hidden="true"></div>
       <div class="ov ov-bottom"><div class="ticker" data-ticker aria-hidden="true"></div><div class="progress"><i data-progress></i></div></div>

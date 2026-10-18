@@ -109,32 +109,33 @@ describe('simulateRace: 能力と条件が結果に影響する', () => {
     expect(rate).toBeLessThan(1);
   });
 
-  it('逃げ馬が多いとハイペースになりやすい', () => {
-    const highRate = (nigeCount: number) => {
+  it('逃げ馬が多いとペースが速くなる（中盤の先頭の速度が上がる）', () => {
+    const avgPace = (nigeCount: number) => {
       const hs = Array.from({ length: 12 }, (_, i) =>
         horse(`p${i}`, { style: i < nigeCount ? 'nige' : i % 2 ? 'sashi' : 'senko' }),
       );
-      let high = 0;
-      for (let s = 0; s < 80; s++) if (simulateRace(MILE, field(hs), `pace${s}`, { record: false }).pace === 'high') high++;
-      return high / 80;
+      let sum = 0;
+      for (let s = 0; s < 60; s++) sum += simulateRace(MILE, field(hs), `pace${s}`, { record: false }).paceRatio;
+      return sum / 60;
     };
-    expect(highRate(4)).toBeGreaterThan(highRate(0) + 0.2);
+    expect(avgPace(4)).toBeGreaterThan(avgPace(0) + 0.005);
   });
 
-  it('ハイペースでは差し・追込が、スローでは逃げ・先行が有利になる', () => {
-    const closerShare = (nigeCount: number) => {
+  it('逃げ馬が多い（ハイペース）ほど、逃げ・先行の馬は勝ちにくくなる', () => {
+    // 中山を参考にした直線の短いコースでは差し・追込が届きにくいので、前の馬の勝率の変化で確かめる
+    const frontShare = (nigeCount: number) => {
       const hs = Array.from({ length: 12 }, (_, i) =>
         horse(`c${i}`, { style: i < nigeCount ? 'nige' : i < 6 ? 'senko' : i < 9 ? 'sashi' : 'oikomi' }),
       );
-      let closers = 0;
+      let front = 0;
       for (let s = 0; s < 120; s++) {
         const r = simulateRace(MILE, field(hs), `cs${s}`, { record: false });
         const st = r.factors[r.order[0]].style;
-        if (st === 'sashi' || st === 'oikomi') closers++;
+        if (st === 'nige' || st === 'senko') front++;
       }
-      return closers / 120;
+      return front / 120;
     };
-    expect(closerShare(4)).toBeGreaterThan(closerShare(1));
+    expect(frontShare(4)).toBeLessThan(frontShare(1));
   });
 
   it('道悪適性: 重馬場では適性Aの馬が適性Dの馬に先着しやすい', () => {

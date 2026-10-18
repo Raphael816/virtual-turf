@@ -1,12 +1,16 @@
 /**
- * 架空の「翠ヶ原競馬場」の環境。実在の競馬場の写しではなく、一般的な競馬場の構成
- * （芝の外回り・ダートの内回り・2層スタンド・内馬場の池と大型ビジョン）を参考にしたオリジナル。
+ * 競馬場の環境。コースの形状・起伏は中山競馬場の公開データを参考にした非公式の再現（core/track.ts）。
+ * 建物・施設の外観は公式の図面や写真を使わず、一般的な構成から作ったオリジナル。
+ * 配置や規模のうち資料で確認できなかったもの（スタンドの規模、障害コースの障害の位置、
+ * ターフビジョンの位置、周辺の街並み）は推定で、docs/05-course-reference.md に記載している。
  *
  * - 空：物理ベースの空（Preetham）＋雲の層。空から環境光（IBL）を作り、自然な陰影にする
- * - 地面：芝・ダート・芝生は色と法線のテクスチャに加え、世界座標のノイズで場所ごとの色ムラを付ける
- * - 芝は内ラチ沿いの傷みと刈り込みの縞、ダートはハロー掛けの筋
- * - スタンド：2層の座席・屋根・ガラス張りの建物。観客は人型のインスタンスで、ゴール前で盛り上がる
- * - 背景：木立・生垣・遠景の稜線と街並み（霧で遠くほど霞む）
+ * - 地形：コースの標高から周囲の地面の高さを補間した起伏のある地面（関東平野らしく遠景は平ら）
+ * - 芝（内回り・外回り）・ダート：色と法線のテクスチャ、世界座標の色ムラ、内ラチ沿いの傷み・刈り込みの縞、ハローの筋
+ * - ラチ：外回りが分かれる・合流する所は外ラチを開ける
+ * - スタンド：ゴール前の2層スタンド・屋根・ガラス張りの建物。観客は人型で、ゴール前で盛り上がる
+ * - 内馬場：障害コース（周回と襷）と生垣・竹柵、ターフビジョン
+ * - 周辺：木立・生垣・住宅地と中層の建物（霧で遠くほど霞む）
  */
 import * as THREE from 'three';
 import { Sky } from 'three/examples/jsm/objects/Sky.js';
@@ -37,10 +41,22 @@ export interface EnvQuality {
 }
 
 const TURF = COURSES.turf;
+const OUTER = COURSES.turfOuter;
 const DIRT = COURSES.dirt;
+const FINISH = pointAt(TURF, TURF.finishU, 0);
 /** スタンド前面（ホームストレッチ外側）の z 座標 */
 export const STAND_Z = TURF.radius + TURF.width + 22;
+/** スタンドの地盤の高さ（ゴール付近のコースの標高） */
+export const STAND_BASE_Y = FINISH.y;
+/** スタンドの中心（ゴール板の少し4コーナー寄り） */
+const STAND_X = FINISH.x + 40;
 const STAND_HALF = 190;
+/** 外回りが内回りから分かれる／合流する u（内回りの座標） */
+const BRANCH_U = 669;
+const JOIN_U = 1364;
+/** 外回り独自の区間（外回りの座標） */
+const OUTER_FROM = 660;
+const OUTER_TO = 1545;
 
 /** 世界座標のノイズで色ムラを付ける（テクスチャの繰り返しを目立たなくする） */
 function addMacroVariation(mat: THREE.MeshStandardMaterial, scale: number, amount: number) {
@@ -60,19 +76,81 @@ function addMacroVariation(mat: THREE.MeshStandardMaterial, scale: number, amoun
   };
 }
 
-/** コースの帯を作る。across 分割して頂点色（傷み・刈り込み縞）を載せる */
-function ribbon(course: Course, inner: number, outer: number, y: number, uvScale: number, across: number, color: (u: number, lane: number) => THREE.Color): THREE.BufferGeometry {
-  const segs = Math.ceil(course.circumference / 2);
+// ---------------------------------------------------------------- 地形
+
+interface TerrainSample {
+  x: number;
+  z: number;
+  e: number;
+}
+const TERRAIN_SAMPLES: TerrainSample[] = (() => {
+  const out: TerrainSample[] = [];
+  for (const c of [TURF, OUTER, DIRT]) {
+    for (let u = 0; u < c.circumference; u += 6) {
+      const p = pointAt(c, u, c.width / 2);
+      out.push({ x: p.x, z: p.z, e: p.y });
+    }
+  }
+  return out;
+})();
+const BASE_LEVEL = 2.2;
+const BUCKET = 60;
+const buckets = new Map<string, TerrainSample[]>();
+for (const s of TERRAIN_SAMPLES) {
+  const k = `${Math.floor(s.x / BUCKET)},${Math.floor(s.z / BUCKET)}`;
+  (buckets.get(k) ?? buckets.set(k, []).get(k)!).push(s);
+}
+
+/** 地面の高さ：近くのコースの標高を、離れるにつれて平らな地盤（BASE_LEVEL）へなじませる */
+export function terrainHeight(x: number, z: number): number {
+  const bx = Math.floor(x / BUCKET);
+  const bz = Math.floor(z / BUCKET);
+  let best = Infinity;
+  let e = BASE_LEVEL;
+  for (let r = 0; r <= 3 && best === Infinity; r++) {
+    for (let i = bx - r; i <= bx + r; i++) {
+      for (let j = bz - r; j <= bz + r; j++) {
+        for (const s of buckets.get(`${i},${j}`) ?? []) {
+          const d = (s.x - x) ** 2 + (s.z - z) ** 2;
+          if (d < best) {
+            best = d;
+            e = s.e;
+          }
+        }
+      }
+    }
+  }
+  const d = Math.sqrt(best);
+  const w = d === Infinity ? 0 : Math.max(0, Math.min(1, 1 - (d - 25) / 140));
+  return e * w + BASE_LEVEL * (1 - w);
+}
+
+// ---------------------------------------------------------------- コース・ラチ
+
+/** コースの帯（u の範囲 [from, to)）。across 分割して頂点色（傷み・刈り込み縞）を載せる */
+function ribbon(
+  course: Course,
+  inner: number,
+  outer: number,
+  yOff: number,
+  uvScale: number,
+  across: number,
+  color: (u: number, lane: number) => THREE.Color,
+  from = 0,
+  to = course.circumference,
+): THREE.BufferGeometry {
+  const len = to - from;
+  const segs = Math.ceil(len / 2);
   const pos: number[] = [];
   const uv: number[] = [];
   const col: number[] = [];
   const idx: number[] = [];
   for (let i = 0; i <= segs; i++) {
-    const u = (i / segs) * course.circumference;
+    const u = from + (i / segs) * len;
     for (let j = 0; j <= across; j++) {
       const lane = inner + ((outer - inner) * j) / across;
       const p = pointAt(course, u, lane);
-      pos.push(p.x, y, p.z);
+      pos.push(p.x, p.y + yOff, p.z);
       uv.push(u / uvScale, lane / uvScale);
       const c = color(u, lane);
       col.push(c.r, c.g, c.b);
@@ -89,9 +167,7 @@ function ribbon(course: Course, inner: number, outer: number, y: number, uvScale
   g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
   g.setIndex(idx);
   g.computeVertexNormals();
-  // 上向きでなければ反転
-  const n = g.getAttribute('normal');
-  if (n.getY(0) < 0) {
+  if (g.getAttribute('normal').getY(0) < 0) {
     for (let i = 0; i < idx.length; i += 3) [idx[i + 1], idx[i + 2]] = [idx[i + 2], idx[i + 1]];
     g.setIndex(idx);
     g.computeVertexNormals();
@@ -99,13 +175,16 @@ function ribbon(course: Course, inner: number, outer: number, y: number, uvScale
   return g;
 }
 
-function railGeometry(course: Course, lane: number, h: number, r: number): THREE.BufferGeometry {
+/** ラチ（u の範囲 [from, to]、閉じた周回なら from=0, to=周長） */
+function railGeometry(course: Course, lane: number, from: number, to: number, h: number, r: number): THREE.BufferGeometry {
   const pts: THREE.Vector3[] = [];
-  for (let u = 0; u < course.circumference; u += 3) {
+  const closed = from === 0 && to >= course.circumference;
+  const end = closed ? course.circumference - 3 : to;
+  for (let u = from; u <= end; u += 3) {
     const p = pointAt(course, u, lane);
-    pts.push(new THREE.Vector3(p.x, h, p.z));
+    pts.push(new THREE.Vector3(p.x, p.y + h, p.z));
   }
-  return new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts, true), pts.length * 2, r, 8, true);
+  return new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts, closed), pts.length * 2, r, 8, closed);
 }
 
 /** 人型（胴＋脚をカプセル、頭は別メッシュ）の観客。シェーダーで揺れと盛り上がりを付ける */
@@ -127,6 +206,30 @@ function crowdMaterial(uniforms: { uTime: { value: number }; uExcite: { value: n
       );
   };
   return m;
+}
+
+/** 外回りの外ラチで囲まれた範囲（内馬場・内回りとの間の空地を含む）。木や建物はここに置かない */
+const OUTER_POLY: { x: number; z: number }[] = (() => {
+  const pts: { x: number; z: number }[] = [];
+  for (let u = 0; u < OUTER.circumference; u += 8) {
+    const p = pointAt(OUTER, u, OUTER.width + 8);
+    pts.push({ x: p.x, z: p.z });
+  }
+  return pts;
+})();
+function insideOuter(x: number, z: number): boolean {
+  let inside = false;
+  for (let i = 0, j = OUTER_POLY.length - 1; i < OUTER_POLY.length; j = i++) {
+    const a = OUTER_POLY[i];
+    const b = OUTER_POLY[j];
+    if (a.z > z !== b.z > z && x < ((b.x - a.x) * (z - a.z)) / (b.z - a.z) + a.x) inside = !inside;
+  }
+  return inside;
+}
+
+/** 最も外側の走路（外回りは共通区間を含むので、外回りの外側をたどればよい）の外 lane(m) の点 */
+function outermost(i: number, n: number, lane: number) {
+  return pointAt(OUTER, (i / n) * OUTER.circumference, OUTER.width + lane);
 }
 
 export class Environment {
@@ -169,7 +272,6 @@ export class Environment {
       s.far = 1200;
     }
 
-    // 雲（上半球のドーム）
     this.clouds = new THREE.Mesh(
       new THREE.SphereGeometry(2600, 32, 16, 0, Math.PI * 2, 0, Math.PI / 2),
       new THREE.MeshBasicMaterial({ transparent: true, depthWrite: false, fog: false, side: THREE.BackSide }),
@@ -179,34 +281,27 @@ export class Environment {
     const rnd = seededRandom('venue:midorigahara');
     const big = q.level !== 'low';
 
-    // ---- 地面（コース外の芝生） ----
-    const grass = grassTextures(big ? 256 : 128);
-    grass.map.repeat.set(500, 500);
-    grass.normal.repeat.set(500, 500);
-    const groundMat = new THREE.MeshStandardMaterial({ map: grass.map, normalMap: grass.normal, normalScale: new THREE.Vector2(0.6, 0.6), roughness: 0.95 });
-    addMacroVariation(groundMat, 0.012, 0.22);
-    const ground = new THREE.Mesh(new THREE.PlaneGeometry(7000, 7000), groundMat);
-    ground.rotation.x = -Math.PI / 2;
-    ground.position.y = -0.25;
-    ground.receiveShadow = true;
-    this.group.add(ground);
+    this.addTerrain(big);
 
-    // ---- 芝コース（内ラチ沿いの傷み・刈り込みの縞） ----
+    // ---- 芝コース（内回り＋外回りの独自区間） ----
     const turfTex = turfTextures(big ? 512 : 256);
     this.turfMat = new THREE.MeshStandardMaterial({ map: turfTex.map, normalMap: turfTex.normal, normalScale: new THREE.Vector2(0.5, 0.5), roughness: 0.92, vertexColors: true });
     addMacroVariation(this.turfMat, 0.03, 0.12);
+    const outerMat = this.turfMat.clone();
+    outerMat.polygonOffset = true;
+    outerMat.polygonOffsetFactor = -1;
+    addMacroVariation(outerMat, 0.03, 0.12);
     const worn = new THREE.Color('#c9b88e');
     const tc = new THREE.Color();
-    const turf = new THREE.Mesh(
-      ribbon(TURF, 0, TURF.width, 0.03, 8, big ? 12 : 6, (u, lane) => {
-        const stripe = Math.floor(u / 12) % 2 === 0 ? 1.05 : 0.95;
-        const wear = Math.max(0, 1 - lane / 7) * (0.35 + 0.65 * fbm3(u * 0.05, lane * 0.4, 0, 3, 3));
-        return tc.setScalar(stripe).lerp(worn, wear * 0.32);
-      }),
-      this.turfMat,
-    );
-    turf.receiveShadow = true;
-    this.group.add(turf);
+    const turfColor = (u: number, lane: number) => {
+      const stripe = Math.floor(u / 12) % 2 === 0 ? 1.05 : 0.95;
+      const wear = Math.max(0, 1 - lane / 7) * (0.35 + 0.65 * fbm3(u * 0.05, lane * 0.4, 0, 3, 3));
+      return tc.setScalar(stripe).lerp(worn, wear * 0.32);
+    };
+    const turf = new THREE.Mesh(ribbon(TURF, 0, TURF.width, 0.03, 8, big ? 12 : 6, turfColor), this.turfMat);
+    const outerTurf = new THREE.Mesh(ribbon(OUTER, 0, OUTER.width, 0.031, 8, big ? 12 : 6, turfColor, OUTER_FROM, OUTER_TO), outerMat);
+    turf.receiveShadow = outerTurf.receiveShadow = true;
+    this.group.add(turf, outerTurf);
 
     // ---- ダートコース ----
     const dirtTex = dirtTextures(big ? 512 : 256);
@@ -226,22 +321,56 @@ export class Environment {
     this.addTowers();
     this.addTrees(rnd);
     this.addHedges(big);
-    this.addInfield();
-    this.addBackground(rnd);
+    this.addInfield(big);
+    this.addSurroundings(rnd);
 
-    // 大型ビジョン（スタンドに向ける）
-    this.board = new THREE.Mesh(new THREE.PlaneGeometry(44, 15), new THREE.MeshBasicMaterial({ color: '#ffffff' }));
-    // 1コーナー寄りの内馬場に置き、スタンドへ向ける（向こう正面への視線を遮らない）
+    // ターフビジョン（内馬場のホームストレッチ寄り。スタンドの主カメラから向正面を見る視線より低く置く。位置は推定）
+    this.board = new THREE.Mesh(new THREE.PlaneGeometry(56, 15), new THREE.MeshBasicMaterial({ color: '#ffffff' }));
     const boardGroup = new THREE.Group();
     const frameMat = new THREE.MeshStandardMaterial({ color: '#30353a', roughness: 0.6 });
-    const frame = new THREE.Mesh(new THREE.BoxGeometry(46, 17, 1.2), frameMat);
+    const frame = new THREE.Mesh(new THREE.BoxGeometry(58, 17, 1.2), frameMat);
     frame.position.set(0, 0, -0.7);
-    const legs = new THREE.Mesh(new THREE.BoxGeometry(2, 8, 2), frameMat);
-    legs.position.set(0, -11.5, -1);
+    const legs = new THREE.Mesh(new THREE.BoxGeometry(2, 9, 2), frameMat);
+    legs.position.set(0, -12, -1);
     boardGroup.add(this.board, frame, legs);
-    boardGroup.position.set(300, 15, 0);
-    boardGroup.lookAt(0, 15, STAND_Z);
+    const bx = -40;
+    const bz = 70;
+    const by = terrainHeight(bx, bz) + 13;
+    boardGroup.scale.setScalar(0.85);
+    boardGroup.position.set(bx, by, bz);
+    boardGroup.lookAt(STAND_X, by, STAND_Z);
     this.group.add(boardGroup);
+  }
+
+  /** 起伏のある地面（コースの標高から補間） */
+  private addTerrain(big: boolean) {
+    const grass = grassTextures(big ? 256 : 128);
+    grass.map.repeat.set(500, 500);
+    grass.normal.repeat.set(500, 500);
+    const groundMat = new THREE.MeshStandardMaterial({ map: grass.map, normalMap: grass.normal, normalScale: new THREE.Vector2(0.6, 0.6), roughness: 0.95 });
+    addMacroVariation(groundMat, 0.012, 0.22);
+    // 近くは細かい格子で起伏を表し、遠くは大きな平面
+    const W = 1500;
+    const H = 1000;
+    const seg = big ? 8 : 12;
+    const geo = new THREE.PlaneGeometry(W, H, Math.round(W / seg), Math.round(H / seg));
+    geo.rotateX(-Math.PI / 2);
+    const pos = geo.getAttribute('position') as THREE.BufferAttribute;
+    for (let i = 0; i < pos.count; i++) {
+      const x = pos.getX(i);
+      const z = pos.getZ(i);
+      // 縁は遠景の平面とつながるよう基準の高さへ
+      const edge = Math.min(1, Math.max(Math.abs(x) / (W / 2), Math.abs(z) / (H / 2)));
+      const h = terrainHeight(x, z);
+      pos.setY(i, (edge > 0.92 ? BASE_LEVEL + (h - BASE_LEVEL) * (1 - edge) / 0.08 : h) - 0.25);
+    }
+    geo.computeVertexNormals();
+    const near = new THREE.Mesh(geo, groundMat);
+    near.receiveShadow = true;
+    const far = new THREE.Mesh(new THREE.PlaneGeometry(9000, 9000), groundMat);
+    far.rotation.x = -Math.PI / 2;
+    far.position.y = BASE_LEVEL - 0.3;
+    this.group.add(near, far);
   }
 
   private addRails(big: boolean) {
@@ -249,19 +378,24 @@ export class Environment {
     const postGeo = new THREE.CylinderGeometry(0.045, 0.05, 1.05, 6);
     postGeo.translate(0, 0.525, 0);
     const step = big ? 2.5 : 5;
-    for (const [course, lane] of [
-      [TURF, -0.4],
-      [TURF, TURF.width + 0.4],
-      [DIRT, -0.4],
-      [DIRT, DIRT.width + 0.4],
-    ] as [Course, number][]) {
-      this.group.add(new THREE.Mesh(railGeometry(course, lane, 1.05, 0.06), white));
-      const n = Math.floor(course.circumference / step);
+    // [コース, レーン, 開始u, 終了u]：外回りが分かれる・合流する所は内回りの外ラチを開ける
+    const rails: [Course, number, number, number][] = [
+      [TURF, -0.4, 0, TURF.circumference],
+      [TURF, TURF.width + 0.4, BRANCH_U + 70, JOIN_U - 70],
+      [TURF, TURF.width + 0.4, JOIN_U + 5, TURF.circumference + BRANCH_U - 5],
+      [OUTER, -0.4, OUTER_FROM + 80, OUTER_TO - 80],
+      [OUTER, OUTER.width + 0.4, OUTER_FROM - 10, OUTER_TO + 10],
+      [DIRT, -0.4, 0, DIRT.circumference],
+      [DIRT, DIRT.width + 0.4, 0, DIRT.circumference],
+    ];
+    for (const [course, lane, from, to] of rails) {
+      this.group.add(new THREE.Mesh(railGeometry(course, lane, from, to, 1.05, 0.06), white));
+      const n = Math.floor((to - from) / step);
       const posts = new THREE.InstancedMesh(postGeo, white, n);
       const m = new THREE.Matrix4();
       for (let i = 0; i < n; i++) {
-        const p = pointAt(course, i * step, lane);
-        posts.setMatrixAt(i, m.makeTranslation(p.x, 0, p.z));
+        const p = pointAt(course, from + i * step, lane);
+        posts.setMatrixAt(i, m.makeTranslation(p.x, p.y, p.z));
       }
       this.group.add(posts);
     }
@@ -273,31 +407,30 @@ export class Environment {
       const a = pointAt(course, course.finishU, 0);
       const line = new THREE.Mesh(new THREE.PlaneGeometry(0.3, course.width), white);
       line.rotation.x = -Math.PI / 2;
-      line.position.set(a.x, 0.06, a.z + course.width / 2);
+      line.position.set(a.x, a.y + 0.06, a.z + course.width / 2);
       this.group.add(line);
     }
     const f = pointAt(TURF, TURF.finishU, -1.6);
     const metal = new THREE.MeshStandardMaterial({ color: '#e8e8e4', roughness: 0.4 });
     const post = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.12, 4.4, 10), metal);
-    post.position.set(f.x, 2.2, f.z);
+    post.position.set(f.x, f.y + 2.2, f.z);
     const disc = new THREE.Mesh(new THREE.CylinderGeometry(1.0, 1.0, 0.1, 32), new THREE.MeshStandardMaterial({ color: '#f5f5f2', roughness: 0.5 }));
     disc.rotation.x = Math.PI / 2;
-    disc.position.set(f.x, 4.9, f.z);
+    disc.position.set(f.x, f.y + 4.9, f.z);
     const ring = new THREE.Mesh(new THREE.TorusGeometry(1.0, 0.1, 10, 32), new THREE.MeshStandardMaterial({ color: '#b71c1c', roughness: 0.5 }));
     ring.position.copy(disc.position);
     this.group.add(post, disc, ring);
-    // 審判台（ゴール前の外側）
+    // 審判台（ゴール板横のカメラの視界を遮らないよう外側に離す）
     const judge = new THREE.Mesh(new THREE.BoxGeometry(4, 9, 4), [metal, metal, metal, metal, this.windowMat, this.windowMat]);
-    // ゴール板横のカメラの視界を遮らないよう、外側に離して置く
-    const jp = pointAt(TURF, TURF.finishU - 8, TURF.width + 19);
-    judge.position.set(jp.x, 4.5, jp.z);
+    const jp = pointAt(TURF, TURF.finishU + 8, TURF.width + 19);
+    judge.position.set(jp.x, jp.y + 4.5, jp.z);
     this.group.add(judge);
-    // ハロン棒（200mごと）
+    // ハロン棒（200mごと、内回りの内ラチ沿い）
     const pole = new THREE.MeshStandardMaterial({ map: poleTexture(), roughness: 0.5 });
     for (let d = 200; d < TURF.circumference; d += 200) {
       const p = pointAt(TURF, TURF.finishU - d, -1.3);
       const m = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 2.6, 8), pole);
-      m.position.set(p.x, 1.3, p.z);
+      m.position.set(p.x, p.y + 1.3, p.z);
       this.group.add(m);
     }
   }
@@ -308,37 +441,34 @@ export class Environment {
     const seats = seatTexture();
     seats.repeat.set(STAND_HALF / 4, 3);
     const seatMat = new THREE.MeshStandardMaterial({ map: seats, roughness: 0.85 });
-    // 傾斜した座席面（下層・上層）
+    const Y = STAND_BASE_Y - 0.2;
+    const X = STAND_X;
     const tier = (z0: number, z1: number, y0: number, y1: number) => {
       const g = new THREE.PlaneGeometry(STAND_HALF * 2, Math.hypot(z1 - z0, y1 - y0));
       const m = new THREE.Mesh(g, seatMat);
-      m.position.set(0, (y0 + y1) / 2, (z0 + z1) / 2);
+      m.position.set(X, Y + (y0 + y1) / 2, (z0 + z1) / 2);
       m.rotation.x = -Math.PI / 2 + Math.atan2(y1 - y0, z1 - z0);
       m.receiveShadow = true;
       this.group.add(m);
       const wall = new THREE.Mesh(new THREE.BoxGeometry(STAND_HALF * 2, 1.4, 0.4), concrete);
-      wall.position.set(0, y0 + 0.5, z0 - 0.2);
+      wall.position.set(X, Y + y0 + 0.5, z0 - 0.2);
       this.group.add(wall);
-      // 座席面の下を埋める（横から見て浮かないように）
-      const fillG = new THREE.BoxGeometry(STAND_HALF * 2, y1 - 0.5, z1 - z0);
-      const fillM = new THREE.Mesh(fillG, darkConcrete);
-      fillM.position.set(0, (y1 - 0.5) / 2, (z0 + z1) / 2 + 0.6);
+      const fillM = new THREE.Mesh(new THREE.BoxGeometry(STAND_HALF * 2, y1 - 0.5, z1 - z0), darkConcrete);
+      fillM.position.set(X, Y + (y1 - 0.5) / 2, (z0 + z1) / 2 + 0.6);
       fillM.scale.y = 0.98;
       this.group.add(fillM);
     };
-    tier(STAND_Z, STAND_Z + 16, 1.2, 8.5); // 下層
-    tier(STAND_Z + 21, STAND_Z + 38, 12, 25); // 上層
+    tier(STAND_Z, STAND_Z + 16, 1.2, 8.5);
+    tier(STAND_Z + 21, STAND_Z + 38, 12, 25);
     const concourse = new THREE.Mesh(new THREE.BoxGeometry(STAND_HALF * 2, 0.6, 5), concrete);
-    concourse.position.set(0, 9, STAND_Z + 18.5);
-    // 背面のガラス張りの建物
+    concourse.position.set(X, Y + 9, STAND_Z + 18.5);
     const facade = facadeTexture();
     facade.repeat.set(16, 3);
     this.windowMat.map = facade;
     const building = new THREE.Mesh(new THREE.BoxGeometry(STAND_HALF * 2 + 30, 38, 20), [concrete, concrete, concrete, concrete, this.windowMat, concrete]);
-    building.position.set(0, 19, STAND_Z + 50);
-    // 屋根（片持ち）と梁・柱
+    building.position.set(X, Y + 19, STAND_Z + 50);
     const roof = new THREE.Mesh(new THREE.BoxGeometry(STAND_HALF * 2 + 20, 0.8, 42), concrete);
-    roof.position.set(0, 36.5, STAND_Z + 26);
+    roof.position.set(X, Y + 36.5, STAND_Z + 26);
     roof.rotation.x = -0.035;
     roof.castShadow = this.q.shadows;
     this.group.add(concourse, building, roof);
@@ -346,34 +476,36 @@ export class Environment {
     const beams: THREE.BufferGeometry[] = [];
     for (let x = -STAND_HALF; x <= STAND_HALF; x += 16) {
       const b = new THREE.BoxGeometry(0.6, 1.8, 40);
-      b.translate(x, 35.4, STAND_Z + 26);
+      b.translate(X + x, Y + 35.4, STAND_Z + 26);
       beams.push(b);
       const col = new THREE.BoxGeometry(1.2, 36, 1.2);
-      col.translate(x, 18, STAND_Z + 42);
+      col.translate(X + x, Y + 18, STAND_Z + 42);
       beams.push(col);
     }
     this.group.add(new THREE.Mesh(mergeGeometries(beams), beamMat));
     for (const s of [-1, 1]) {
       const end = new THREE.Mesh(new THREE.BoxGeometry(2, 30, 44), concrete);
-      end.position.set(s * (STAND_HALF + 1), 15, STAND_Z + 20);
+      end.position.set(X + s * (STAND_HALF + 1), Y + 15, STAND_Z + 20);
       this.group.add(end);
     }
-    // 前のエプロン（舗装）
+    // 前のエプロン（舗装）：コースの外ラチからスタンドまで
     const apronMat = new THREE.MeshStandardMaterial({ color: '#8f9396', roughness: 1 });
     addMacroVariation(apronMat, 0.05, 0.12);
     const apronDepth = STAND_Z - (TURF.radius + TURF.width + 2);
     const apron = new THREE.Mesh(new THREE.PlaneGeometry(STAND_HALF * 2 + 40, apronDepth), apronMat);
     apron.rotation.x = -Math.PI / 2;
-    apron.position.set(0, 0.02, STAND_Z - apronDepth / 2);
+    apron.position.set(X, Y + 0.05, STAND_Z - apronDepth / 2);
     apron.receiveShadow = true;
     this.group.add(apron);
-    // パドック側の建物群（スタンドの両脇）
+    // パドック・付属棟（スタンドの裏・両脇。規模と配置は推定）
     for (let i = 0; i < 6; i++) {
       const w = 20 + rnd() * 30;
       const h = 8 + rnd() * 14;
       const b = new THREE.Mesh(new THREE.BoxGeometry(w, h, 18), i % 2 ? concrete : darkConcrete);
       const side = i < 3 ? -1 : 1;
-      b.position.set(side * (STAND_HALF + 40 + (i % 3) * 45), h / 2, STAND_Z + 20 + rnd() * 20);
+      const bx = X + side * (STAND_HALF + 40 + (i % 3) * 45);
+      const bz = STAND_Z + 20 + rnd() * 20;
+      b.position.set(bx, terrainHeight(bx, bz) + h / 2 - 0.3, bz);
       this.group.add(b);
     }
   }
@@ -393,6 +525,7 @@ export class Environment {
     const s = new THREE.Vector3();
     const c = new THREE.Color();
     const yAxis = new THREE.Vector3(0, 1, 0);
+    const Y = STAND_BASE_Y - 0.2;
     for (let i = 0; i < n; i++) {
       const r = rnd();
       let x: number;
@@ -401,21 +534,21 @@ export class Environment {
       let scale = 1;
       if (r < 0.5) {
         const t = rnd();
-        x = (rnd() * 2 - 1) * (STAND_HALF - 2);
+        x = STAND_X + (rnd() * 2 - 1) * (STAND_HALF - 2);
         z = STAND_Z + 0.5 + t * 15;
-        y = 1.2 + (7.3 * (z - STAND_Z)) / 16 - 0.25;
+        y = Y + 1.2 + (7.3 * (z - STAND_Z)) / 16 - 0.25;
         scale = 0.78;
       } else if (r < 0.75) {
         const t = rnd();
-        x = (rnd() * 2 - 1) * (STAND_HALF - 2);
+        x = STAND_X + (rnd() * 2 - 1) * (STAND_HALF - 2);
         z = STAND_Z + 21.5 + t * 16;
-        y = 12 + (13 * (z - STAND_Z - 21)) / 17 - 0.25;
+        y = Y + 12 + (13 * (z - STAND_Z - 21)) / 17 - 0.25;
         scale = 0.78;
       } else {
         // エプロンの立ち見（ゴール前ほど密）
-        x = rnd() < 0.6 ? (rnd() - 0.5) * 120 + 60 : (rnd() * 2 - 1) * STAND_HALF;
+        x = rnd() < 0.6 ? FINISH.x + (rnd() - 0.5) * 120 : STAND_X + (rnd() * 2 - 1) * STAND_HALF;
         z = STAND_Z - 2 - rnd() * 14;
-        y = 0;
+        y = Y + 0.05;
       }
       s.set(scale * (0.9 + rnd() * 0.2), scale * (0.9 + rnd() * 0.25), scale);
       q.setFromAxisAngle(yAxis, Math.PI + (rnd() - 0.5) * 0.8);
@@ -428,36 +561,36 @@ export class Environment {
     this.group.add(bodies, heads);
   }
 
+  /** 照明塔（最も外側の走路のさらに外） */
   private addTowers() {
     const steel = new THREE.MeshStandardMaterial({ color: '#7b838a', metalness: 0.5, roughness: 0.5 });
     const glow = glowSprite();
-    for (let i = 0; i < 12; i++) {
-      const a = (i / 12) * Math.PI * 2;
-      const x = Math.cos(a) * (TURF.straight / 2 + TURF.radius + 45);
-      const z = Math.sin(a) * (TURF.radius + 45);
-      if (z > STAND_Z - 30 && Math.abs(x) < STAND_HALF) continue;
+    const N = 14;
+    for (let i = 0; i < N; i++) {
+      const p = outermost(i, N, 45);
+      if (p.z > STAND_Z - 40 && Math.abs(p.x - STAND_X) < STAND_HALF + 20) continue;
+      const base = terrainHeight(p.x, p.z);
       const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 1.2, 50, 8), steel);
-      pole.position.set(x, 25, z);
+      pole.position.set(p.x, base + 25, p.z);
       const head = new THREE.Mesh(new THREE.BoxGeometry(9, 5, 1.0), this.lampMat);
-      head.position.set(x, 51, z);
+      head.position.set(p.x, base + 51, p.z);
       head.lookAt(0, 0, 0);
       this.group.add(pole, head);
       const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: glow, color: '#fff6e0', transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending, fog: false }));
-      const inward = new THREE.Vector3(-x, 0, -z).normalize().multiplyScalar(1.5);
-      sp.position.set(x + inward.x, 51, z + inward.z);
+      const inward = new THREE.Vector3(-p.x, 0, -p.z).normalize().multiplyScalar(1.5);
+      sp.position.set(p.x + inward.x, base + 51, p.z + inward.z);
       sp.scale.set(26, 18, 1);
       this.glows.push(sp);
       this.group.add(sp);
     }
   }
 
-  /** 木立：ノイズで凹凸をつけた樹冠を数種類作り、インスタンスで配置 */
+  /** 木立（コースの外周に帯状に）。樹冠はノイズで凹凸をつけた形を数種類 */
   private addTrees(rnd: () => number) {
     const variants: THREE.BufferGeometry[] = [];
     for (let v = 0; v < 3; v++) {
       const parts: THREE.BufferGeometry[] = [];
-      const blobs = 3 + v;
-      for (let b = 0; b < blobs; b++) {
+      for (let b = 0; b < 3 + v; b++) {
         const g = new THREE.IcosahedronGeometry(1, 2);
         const pos = g.getAttribute('position') as THREE.BufferAttribute;
         for (let i = 0; i < pos.count; i++) {
@@ -478,8 +611,9 @@ export class Environment {
     }
     const trunkGeo = new THREE.CylinderGeometry(0.25, 0.4, 6, 6);
     trunkGeo.translate(0, 3, 0);
-    const leafMat = new THREE.MeshLambertMaterial({ color: '#ffffff' });
-    const trunkMat = new THREE.MeshLambertMaterial({ color: '#6e5c4b' });
+    // 空からの環境光を受ける材質にする（逆光で真っ黒なシルエットにならないように）
+    const leafMat = new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.9 });
+    const trunkMat = new THREE.MeshStandardMaterial({ color: '#6e5c4b', roughness: 1 });
     const per = Math.ceil(this.q.trees / 3);
     const m = new THREE.Matrix4();
     const c = new THREE.Color();
@@ -492,20 +626,14 @@ export class Environment {
         let x = 0;
         let z = 0;
         for (let tries = 0; tries < 30; tries++) {
-          {
-            // 外周の林だけに置く（内馬場はスタンドからの視線を遮らないよう空けておく）
-            const a = rnd() * Math.PI * 2;
-            const r = 1.05 + rnd() * 0.8;
-            x = Math.cos(a) * (TURF.straight / 2 + TURF.radius + 70) * r;
-            z = Math.sin(a) * (TURF.radius + 75) * r;
-          }
-          const nearStand = z > STAND_Z - 30 && Math.abs(x) < STAND_HALF + 160;
-          const inPond = Math.abs(z - 30) < 46 && Math.abs(x + 40) < 120;
-          const nearBoard = Math.abs(x - 300) < 35 && Math.abs(z) < 25;
-          if (!nearStand && !inPond && !nearBoard && !this.onTrack(x, z)) break;
+          const p = outermost(Math.floor(rnd() * 1000), 1000, 25 + rnd() * 90);
+          x = p.x + (rnd() - 0.5) * 20;
+          z = p.z + (rnd() - 0.5) * 20;
+          const nearStand = z > STAND_Z - 30 && Math.abs(x - STAND_X) < STAND_HALF + 160;
+          if (!nearStand && !insideOuter(x, z)) break;
         }
         const s = 0.7 + rnd() * 0.9;
-        m.makeRotationY(rnd() * Math.PI * 2).scale(new THREE.Vector3(s, s * (0.9 + rnd() * 0.4), s)).setPosition(x, 0, z);
+        m.makeRotationY(rnd() * Math.PI * 2).scale(new THREE.Vector3(s, s * (0.9 + rnd() * 0.4), s)).setPosition(x, terrainHeight(x, z) - 0.3, z);
         inst.setMatrixAt(i, m);
         inst.setColorAt(i, c.set(greens[Math.floor(rnd() * greens.length)]).offsetHSL(0, 0, (rnd() - 0.5) * 0.06));
         trunks.setMatrixAt(ti++, m);
@@ -516,14 +644,6 @@ export class Environment {
     this.group.add(trunks);
   }
 
-  /** コース上（ラチの内外数m）に木を置かない */
-  private onTrack(x: number, z: number): boolean {
-    const L = TURF.straight / 2;
-    const dx = Math.max(0, Math.abs(x) - L);
-    const r = Math.hypot(dx, z);
-    return r > DIRT.radius - 15 && r < TURF.radius + TURF.width + 20;
-  }
-
   private addHedges(big: boolean) {
     const tex = hedgeTexture();
     tex.repeat.set(2, 1);
@@ -531,65 +651,152 @@ export class Environment {
     const geo = new THREE.BoxGeometry(2.6, 1.3, 1.0);
     geo.translate(0, 0.65, 0);
     const step = big ? 2.5 : 5;
-    const n = Math.floor(TURF.circumference / step);
+    const n = Math.floor(OUTER.circumference / step);
     const inst = new THREE.InstancedMesh(geo, mat, n);
     const m = new THREE.Matrix4();
     let k = 0;
     for (let i = 0; i < n; i++) {
-      const p = pointAt(TURF, i * step, TURF.width + 2.2);
-      if (p.z > TURF.radius && Math.abs(p.x) < STAND_HALF + 10) continue; // スタンド前は開ける
-      m.makeRotationY(-p.heading).setPosition(p.x, 0, p.z);
+      const p = pointAt(OUTER, i * step, OUTER.width + 2.2);
+      if (p.z > TURF.radius && Math.abs(p.x - STAND_X) < STAND_HALF + 10) continue; // スタンド前は開ける
+      m.makeRotationY(-p.heading).setPosition(p.x, p.y, p.z);
       inst.setMatrixAt(k++, m);
     }
     inst.count = k;
     this.group.add(inst);
   }
 
-  private addInfield() {
-    const pond = new THREE.Mesh(
-      new THREE.CircleGeometry(1, 64),
-      new THREE.MeshStandardMaterial({ color: '#16303a', roughness: 0.22, metalness: 0.0, envMapIntensity: 0.55 }),
-    );
-    pond.scale.set(110, 40, 1);
-    pond.rotation.x = -Math.PI / 2;
-    pond.position.set(-40, 0.05, 30);
-    const bank = new THREE.Mesh(new THREE.RingGeometry(1, 1.04, 64), new THREE.MeshStandardMaterial({ color: '#6f6a5c', roughness: 1 }));
-    bank.scale.set(110, 40, 1);
-    bank.rotation.x = -Math.PI / 2;
-    bank.position.set(-40, 0.06, 30);
-    this.group.add(pond, bank);
+  /**
+   * 内馬場：障害コース（周回コースと、内馬場を斜めに横切る「襷」）と障害（生垣・竹柵）。
+   * 公式の障害コースは1周 1,456.4m だが、このモデルではダートの内側に収めるため短い（約1,250m）。
+   * 形・障害の位置はすべて推定。
+   */
+  private addInfield(big: boolean) {
+    const R = DIRT.radius - 32;
+    const L = 360;
+    const width = 20;
+    const hurdleMat = new THREE.MeshStandardMaterial({ map: this.turfMat.map, normalMap: this.turfMat.normalMap, roughness: 0.95, color: '#d7e3cf' });
+    addMacroVariation(hurdleMat, 0.03, 0.15);
+    const pts: { x: number; z: number; h: number }[] = [];
+    const ringPoint = (s: number) => {
+      // ダートの内側に収まる楕円（直線 L、半径 R）。s は周回上の距離
+      const C = 2 * L + 2 * Math.PI * R;
+      const u = ((s % C) + C) % C;
+      if (u < L) return { x: L / 2 - u, z: R, h: Math.PI };
+      if (u < L + Math.PI * R) {
+        const a = Math.PI / 2 + (u - L) / R;
+        return { x: -L / 2 + Math.cos(a) * R, z: Math.sin(a) * R, h: a + Math.PI / 2 };
+      }
+      if (u < 2 * L + Math.PI * R) return { x: -L / 2 + (u - L - Math.PI * R), z: -R, h: 0 };
+      const a = -Math.PI / 2 + (u - 2 * L - Math.PI * R) / R;
+      return { x: L / 2 + Math.cos(a) * R, z: Math.sin(a) * R, h: a + Math.PI / 2 };
+    };
+    const C = 2 * L + 2 * Math.PI * R;
+    for (let s = 0; s <= C; s += 3) pts.push(ringPoint(s));
+    // 周回コースの帯
+    const pos: number[] = [];
+    const idx: number[] = [];
+    pts.forEach((p, i) => {
+      const nx = Math.sin(p.h);
+      const nz = -Math.cos(p.h);
+      for (const lane of [0, width]) {
+        const x = p.x + nx * lane;
+        const z = p.z + nz * lane;
+        pos.push(x, terrainHeight(x, z) - 0.18, z);
+      }
+      if (i < pts.length - 1) idx.push(i * 2, i * 2 + 1, i * 2 + 2, i * 2 + 1, i * 2 + 3, i * 2 + 2);
+    });
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setIndex(idx);
+    g.computeVertexNormals();
+    const ring = new THREE.Mesh(g, hurdleMat);
+    ring.material.side = THREE.DoubleSide;
+    ring.receiveShadow = true;
+    this.group.add(ring);
+    // 襷（内馬場を斜めに横切る走路）
+    const a = { x: -L / 2 - R * 0.4, z: R * 0.55 };
+    const b = { x: L / 2 + R * 0.4, z: -R * 0.55 };
+    const dx = b.x - a.x;
+    const dz = b.z - a.z;
+    const len = Math.hypot(dx, dz);
+    const diag = new THREE.Mesh(new THREE.PlaneGeometry(len, 18, Math.ceil(len / 10), 1), hurdleMat);
+    diag.rotation.x = -Math.PI / 2;
+    diag.rotation.z = -Math.atan2(dz, dx);
+    diag.position.set((a.x + b.x) / 2, terrainHeight((a.x + b.x) / 2, (a.z + b.z) / 2) - 0.17, (a.z + b.z) / 2);
+    this.group.add(diag);
+
+    // 障害：生垣（周回の直線に数か所）、襷の上に大きな生垣と竹柵（位置は推定）
+    const hedgeMat = new THREE.MeshStandardMaterial({ map: hedgeTexture(), roughness: 1 });
+    const bambooMat = new THREE.MeshStandardMaterial({ color: '#9a8a55', roughness: 0.8 });
+    const hedge = (x: number, z: number, heading: number, h: number, w: number) => {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(1.6, h, w), hedgeMat);
+      m.position.set(x, terrainHeight(x, z) - 0.2 + h / 2, z);
+      m.rotation.y = -heading;
+      m.castShadow = this.q.shadows;
+      this.group.add(m);
+    };
+    for (const s of [L * 0.3, L * 0.75, L + Math.PI * R + L * 0.25, L + Math.PI * R + L * 0.7]) {
+      const p = ringPoint(s);
+      const nx = Math.sin(p.h);
+      const nz = -Math.cos(p.h);
+      hedge(p.x + nx * width * 0.5, p.z + nz * width * 0.5, p.h, 1.4, width);
+    }
+    const dh = Math.atan2(dz, dx);
+    hedge(a.x + dx * 0.35, a.z + dz * 0.35, dh, 1.6, 18); // 大きな生垣（推定）
+    // 竹柵：細い竹を並べる
+    const fx = a.x + dx * 0.65;
+    const fz = a.z + dz * 0.65;
+    const count = big ? 90 : 40;
+    const bamboo = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.035, 0.04, 1.6, 5).translate(0, 0.8, 0), bambooMat, count);
+    const m = new THREE.Matrix4();
+    for (let i = 0; i < count; i++) {
+      const t = (i / (count - 1) - 0.5) * 18;
+      const x = fx - Math.sin(dh) * t + Math.cos(dh) * (i % 3) * 0.15;
+      const z = fz + Math.cos(dh) * t + Math.sin(dh) * (i % 3) * 0.15;
+      bamboo.setMatrixAt(i, m.makeTranslation(x, terrainHeight(x, z) - 0.2, z));
+    }
+    this.group.add(bamboo);
   }
 
-  /** 遠景：2層の稜線と、片側の街並み（霧で霞ませる） */
-  private addBackground(rnd: () => number) {
-    const ridge = (radius: number, height: number, color: string, seed: number) => {
-      const segs = 200;
-      const pos: number[] = [];
-      const idx: number[] = [];
-      for (let i = 0; i <= segs; i++) {
-        const a = (i / segs) * Math.PI * 2;
-        const h = height * (0.35 + 0.65 * fbm3(Math.cos(a) * 2.5, Math.sin(a) * 2.5, seed, 4, seed));
-        const x = Math.cos(a) * radius;
-        const z = Math.sin(a) * radius;
-        pos.push(x, -2, z, x, h, z);
-        if (i < segs) idx.push(i * 2, i * 2 + 1, i * 2 + 2, i * 2 + 1, i * 2 + 3, i * 2 + 2);
+  /** 周辺：住宅地（低層の家並み）と中層の建物。遠くは霧で霞む（配置は推定） */
+  private addSurroundings(rnd: () => number) {
+    const houses: THREE.BufferGeometry[] = [];
+    const roofs: THREE.BufferGeometry[] = [];
+    const flats: THREE.BufferGeometry[] = [];
+    for (let i = 0; i < 520; i++) {
+      const p = outermost(Math.floor(rnd() * 1000), 1000, 150 + rnd() * 420);
+      const x = p.x + (rnd() - 0.5) * 40;
+      const z = p.z + (rnd() - 0.5) * 40;
+      if (z > STAND_Z - 10 && Math.abs(x - STAND_X) < STAND_HALF + 220 && z < STAND_Z + 160) continue;
+      if (insideOuter(x, z)) continue;
+      const base = terrainHeight(x, z) - 0.3;
+      if (rnd() < 0.85) {
+        const w = 7 + rnd() * 5;
+        const d = 7 + rnd() * 4;
+        const h = 5 + rnd() * 2.5;
+        const rot = rnd() * Math.PI;
+        const body = new THREE.BoxGeometry(w, h, d).rotateY(rot).translate(x, base + h / 2, z);
+        houses.push(body);
+        const roof = new THREE.ConeGeometry(Math.max(w, d) * 0.72, 2.2, 4).rotateY(Math.PI / 4 + rot).translate(x, base + h + 1.1, z);
+        roofs.push(roof);
+      } else {
+        const w = 18 + rnd() * 25;
+        const h = 12 + rnd() * 25;
+        flats.push(new THREE.BoxGeometry(w, h, 12 + rnd() * 8).rotateY(rnd() * Math.PI).translate(x, base + h / 2, z));
       }
-      const g = new THREE.BufferGeometry();
-      g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-      g.setIndex(idx);
-      g.computeVertexNormals();
-      return new THREE.Mesh(g, new THREE.MeshLambertMaterial({ color, side: THREE.DoubleSide }));
-    };
-    this.group.add(ridge(2300, 210, '#5d7468', 3), ridge(1650, 110, '#4b6450', 7));
-    const town: THREE.BufferGeometry[] = [];
-    for (let i = 0; i < 70; i++) {
-      const w = 12 + rnd() * 30;
-      const h = 6 + rnd() * rnd() * 45;
-      const g = new THREE.BoxGeometry(w, h, 12 + rnd() * 20);
-      g.translate((rnd() - 0.5) * 1400, h / 2, -(800 + rnd() * 450));
-      town.push(g);
     }
-    this.group.add(new THREE.Mesh(mergeGeometries(town), new THREE.MeshLambertMaterial({ color: '#9aa2a8' })));
+    if (houses.length) this.group.add(new THREE.Mesh(mergeGeometries(houses), new THREE.MeshStandardMaterial({ color: '#d8d2c4', roughness: 0.95 })));
+    if (roofs.length) this.group.add(new THREE.Mesh(mergeGeometries(roofs), new THREE.MeshStandardMaterial({ color: '#5a5e66', roughness: 0.8 })));
+    if (flats.length) this.group.add(new THREE.Mesh(mergeGeometries(flats), new THREE.MeshStandardMaterial({ color: '#b8bcc0', roughness: 0.9 })));
+    // 遠景の街並み（平野の地平線）
+    const town: THREE.BufferGeometry[] = [];
+    for (let i = 0; i < 160; i++) {
+      const a = rnd() * Math.PI * 2;
+      const r = 1400 + rnd() * 900;
+      const h = 8 + rnd() * rnd() * 60;
+      town.push(new THREE.BoxGeometry(20 + rnd() * 40, h, 20 + rnd() * 30).translate(Math.cos(a) * r, BASE_LEVEL + h / 2, Math.sin(a) * r));
+    }
+    this.group.add(new THREE.Mesh(mergeGeometries(town), new THREE.MeshLambertMaterial({ color: '#a4abb2' })));
   }
 
   /** 天候・時間帯・馬場に合わせて空・光・霧・質感を切り替える */
