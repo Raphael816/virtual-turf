@@ -20,6 +20,9 @@ import { CameraDirector, type DirectorHorse } from './camera';
 import { ClodSystem, DustSystem, HoofPrints, RainSystem } from './effects';
 import { Environment } from './environment';
 import { type Detail, HorseModel } from './horseModel';
+import { HORSE_ROLLOUT } from './horse/rollout';
+import { type HorseView, RaceHorse } from './horse/racehorse';
+import { specFromLook } from './horse/spec';
 import { PostFX } from './post';
 
 export type Quality = 'auto' | 'low' | 'medium' | 'high';
@@ -75,7 +78,10 @@ export class Viewer3D implements RaceViewer {
   private prints!: HoofPrints;
   private rain!: RainSystem;
   private post: PostFX | null = null;
-  private horses: HorseModel[] = [];
+  private horses: HorseView[] = [];
+  /** 新しい馬モデル（基準モデルの制作基準）に置き換えた馬の番号 */
+  private upgraded = new Set<number>();
+  private upgradeToken = 0;
   private lateral: number[] = [];
   private gate: THREE.Group | null = null;
   private container: HTMLElement | null = null;
@@ -100,10 +106,37 @@ export class Viewer3D implements RaceViewer {
   private width = 1;
   private height = 1;
 
+  private ray = new THREE.Raycaster();
+  private lastInputs: DirectorHorse[] = [];
+  /** カメラ位置から各被写体への視線が、看板・照明塔・木・建物などに遮られている割合 */
+  private occlusion = (from: THREE.Vector3, targets: THREE.Vector3[]): number => {
+    if (!this.env || !targets.length) return 0;
+    let blocked = 0;
+    const dir = new THREE.Vector3();
+    for (const t of targets) {
+      dir.subVectors(t, from);
+      const dist = dir.length();
+      this.ray.set(from, dir.normalize());
+      this.ray.far = dist - 1.5;
+      if (this.ray.intersectObjects(this.env.occluders, true).length) blocked++;
+    }
+    return blocked / targets.length;
+  };
+
   /** 開発時の確認用：カメラの状態 */
   debugInfo() {
     const c = this.camera;
-    return { shot: this.director.shot, fov: c.fov, pos: c.position.toArray().map((v) => Math.round(v)), focus: this.director.focus.toArray().map((v) => Math.round(v)), look: this.director.lookPoint.toArray().map((v) => Math.round(v)), radius: this.director.subjectRadius, focusDistance: Math.round(this.director.focusDistance) };
+    const top = [...this.lastInputs].sort((a, b) => a.rank - b.rank).slice(0, 5).map((h) => new THREE.Vector3(h.wx, h.wy + 1.4, h.wz));
+    return {
+      shot: this.director.shot,
+      fov: Math.round(c.fov * 10) / 10,
+      pos: c.position.toArray().map((v) => Math.round(v)),
+      look: this.director.lookPoint.toArray().map((v) => Math.round(v)),
+      radius: Math.round(this.director.subjectRadius),
+      blockedTop5: this.occlusion(c.position, top),
+      upgraded: [...this.upgraded],
+      upgradedReady: this.horses.map((h) => h instanceof RaceHorse),
+    };
   }
 
   constructor(private opts: Viewer3DOptions) {
@@ -166,16 +199,14 @@ export class Viewer3D implements RaceViewer {
       this.scene.remove(h.root);
       h.dispose();
     });
-    this.horses = card.entries.map((e) => {
-      const horse = HORSE_BY_ID.get(e.horseId)!;
-      const m = new HorseModel(
-        { id: horse.id, coat: horse.coat, coatColor: horse.color, number: e.number, capColor: GATE_COLORS[(e.frame - 1) % 8].bg },
-        this.profile.detail,
-        { shadows: this.profile.shadows, physical: this.profile.physical },
-      );
+    this.upgraded.clear();
+    this.upgradeToken++;
+    this.horses = card.entries.map((_, i) => {
+      const m = this.legacyHorse(card, i);
       this.scene.add(m.root);
       return m;
     });
+    this.applyRollout();
     this.lateral = card.entries.map(() => 0);
     this.env.applyConditions(c.weather, c.timeOfDay, c.going, [`${card.no}R ${card.name}`, courseShort(c)]);
     this.rain.setIntensity(c.weather === 'rain' ? 2 : c.weather === 'drizzle' ? 1 : 0);
@@ -236,9 +267,59 @@ export class Viewer3D implements RaceViewer {
     this.scene.add(g);
   }
 
+  private lookOf(card: RaceCard, i: number) {
+    const e = card.entries[i];
+    const horse = HORSE_BY_ID.get(e.horseId)!;
+    return { id: horse.id, name: horse.name, coat: horse.coat, coatColor: horse.color, number: e.number, capColor: GATE_COLORS[(e.frame - 1) % 8].bg };
+  }
+
+  private legacyHorse(card: RaceCard, i: number): HorseView {
+    return new HorseModel(this.lookOf(card, i), this.profile.detail, { shadows: this.profile.shadows, physical: this.profile.physical });
+  }
+
+  private swapHorse(i: number, next: HorseView) {
+    const old = this.horses[i];
+    if (!old) return next.dispose();
+    this.scene.remove(old.root);
+    old.dispose();
+    this.horses[i] = next;
+    this.scene.add(next.root);
+  }
+
+  /**
+   * 新しい馬モデルへの置き換え。基準モデルの品質確認が終わるまでは注目馬1頭だけ（HORSE_ROLLOUT）。
+   * メッシュの生成は Worker で行い、できあがるまでは旧モデルで表示する。失敗した場合も旧モデルのまま。
+   */
+  private applyRollout() {
+    const card = this.card;
+    if (!card || this.failed) return;
+    const want = new Set<number>(HORSE_ROLLOUT === 'all' ? card.entries.map((_, i) => i) : [Math.min(this.followIndex, card.entries.length - 1)]);
+    for (const i of [...this.upgraded]) {
+      if (!want.has(i)) {
+        this.upgraded.delete(i);
+        this.swapHorse(i, this.legacyHorse(card, i));
+      }
+    }
+    const token = this.upgradeToken;
+    for (const i of want) {
+      if (this.upgraded.has(i)) continue;
+      this.upgraded.add(i);
+      RaceHorse.create(specFromLook(this.lookOf(card, i)), this.profile.detail, { shadows: this.profile.shadows, physical: this.profile.physical })
+        .then((h) => {
+          if (token !== this.upgradeToken || this.failed || !this.upgraded.has(i) || this.card !== card) return h.dispose();
+          this.swapHorse(i, h);
+        })
+        .catch((e) => {
+          console.warn('new horse model unavailable; keeping the previous model', e);
+        });
+    }
+  }
+
   setCamera(mode: CameraMode, followIndex?: number): void {
     this.director.mode = mode;
+    const prev = this.followIndex;
     this.followIndex = followIndex ?? this.followIndex;
+    if (this.followIndex !== prev) this.applyRollout();
   }
 
   setQuality(q: Quality) {
@@ -344,7 +425,8 @@ export class Viewer3D implements RaceViewer {
 
     // 発馬機は発走後に撤去する（実際の中継と同じく、カメラカーの視界を遮らない）
     if (this.gate) this.gate.visible = time < 4;
-    this.director.update({ time, dt: dtRace, horses: inputs, followIndex: this.followIndex, course, distance: D, started: time > 0, aspect: this.width / this.height });
+    this.lastInputs = inputs;
+    this.director.update({ time, dt: dtRace, horses: inputs, followIndex: this.followIndex, course, distance: D, started: time > 0, aspect: this.width / this.height, occlusion: this.occlusion });
     if (this.director.shot !== this.lastShot) {
       this.post?.resetHistory();
       this.lastShot = this.director.shot;

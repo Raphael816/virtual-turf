@@ -234,6 +234,8 @@ function outermost(i: number, n: number, lane: number) {
 
 export class Environment {
   readonly group = new THREE.Group();
+  /** カメラと馬の間に入りうる設備（看板・照明塔・木・建物・生垣・障害）。カメラの遮蔽判定に使う */
+  readonly occluders: THREE.Object3D[] = [];
   readonly sun = new THREE.DirectionalLight('#fff4e0', 3);
   private fill = new THREE.DirectionalLight('#cfe0ff', 0);
   private hemi = new THREE.HemisphereLight('#bcd3e8', '#4a5a3a', 0.25);
@@ -340,6 +342,7 @@ export class Environment {
     boardGroup.position.set(bx, by, bz);
     boardGroup.lookAt(STAND_X, by, STAND_Z);
     this.group.add(boardGroup);
+    this.occluders.push(boardGroup);
   }
 
   /** 起伏のある地面（コースの標高から補間） */
@@ -425,6 +428,7 @@ export class Environment {
     const jp = pointAt(TURF, TURF.finishU + 8, TURF.width + 19);
     judge.position.set(jp.x, jp.y + 4.5, jp.z);
     this.group.add(judge);
+    this.occluders.push(judge);
     // ハロン棒（200mごと、内回りの内ラチ沿い）
     const pole = new THREE.MeshStandardMaterial({ map: poleTexture(), roughness: 0.5 });
     for (let d = 200; d < TURF.circumference; d += 200) {
@@ -472,6 +476,7 @@ export class Environment {
     roof.rotation.x = -0.035;
     roof.castShadow = this.q.shadows;
     this.group.add(concourse, building, roof);
+    this.occluders.push(building, roof);
     const beamMat = new THREE.MeshStandardMaterial({ color: '#8d9399', roughness: 0.6, metalness: 0.3 });
     const beams: THREE.BufferGeometry[] = [];
     for (let x = -STAND_HALF; x <= STAND_HALF; x += 16) {
@@ -487,6 +492,7 @@ export class Environment {
       const end = new THREE.Mesh(new THREE.BoxGeometry(2, 30, 44), concrete);
       end.position.set(X + s * (STAND_HALF + 1), Y + 15, STAND_Z + 20);
       this.group.add(end);
+      this.occluders.push(end);
     }
     // 前のエプロン（舗装）：コースの外ラチからスタンドまで
     const apronMat = new THREE.MeshStandardMaterial({ color: '#8f9396', roughness: 1 });
@@ -507,6 +513,7 @@ export class Environment {
       const bz = STAND_Z + 20 + rnd() * 20;
       b.position.set(bx, terrainHeight(bx, bz) + h / 2 - 0.3, bz);
       this.group.add(b);
+      this.occluders.push(b);
     }
   }
 
@@ -576,6 +583,7 @@ export class Environment {
       head.position.set(p.x, base + 51, p.z);
       head.lookAt(0, 0, 0);
       this.group.add(pole, head);
+      this.occluders.push(pole, head);
       const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: glow, color: '#fff6e0', transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending, fog: false }));
       const inward = new THREE.Vector3(-p.x, 0, -p.z).normalize().multiplyScalar(1.5);
       sp.position.set(p.x + inward.x, base + 51, p.z + inward.z);
@@ -640,8 +648,11 @@ export class Environment {
       }
       inst.castShadow = this.q.level === 'high';
       this.group.add(inst);
+    this.occluders.push(inst);
+      this.occluders.push(inst);
     });
     this.group.add(trunks);
+    this.occluders.push(trunks);
   }
 
   private addHedges(big: boolean) {
@@ -734,6 +745,7 @@ export class Environment {
       m.rotation.y = -heading;
       m.castShadow = this.q.shadows;
       this.group.add(m);
+      this.occluders.push(m);
     };
     for (const s of [L * 0.3, L * 0.75, L + Math.PI * R + L * 0.25, L + Math.PI * R + L * 0.7]) {
       const p = ringPoint(s);
@@ -756,6 +768,7 @@ export class Environment {
       bamboo.setMatrixAt(i, m.makeTranslation(x, terrainHeight(x, z) - 0.2, z));
     }
     this.group.add(bamboo);
+    this.occluders.push(bamboo);
   }
 
   /** 周辺：住宅地（低層の家並み）と中層の建物。遠くは霧で霞む（配置は推定） */

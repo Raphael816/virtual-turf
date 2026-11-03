@@ -9,7 +9,10 @@
  * - finishline ゴール板の横
  * - follow     注目馬の後方
  * - gate       発馬機の横
+ * - turn4      最終コーナー：コースの外側から馬群を横に見て、コーナーの出口から直線への動きを横長の画面で追う
  *
+ * 遮蔽：カメラと馬の間に看板・照明塔・木・建物が入らないよう、ショットの切替時と0.5秒ごとに視線を確かめ、
+ * 遮られていれば候補の中から見通しのよい位置（高さ・距離）へなめらかに移る。
  * 画角は「撮りたい馬が画面に収まる」ように自動で決める。注視点は速度つきの追従フィルタで、
  * 時速60km近い馬に遅れずに滑らかに追う。ショットの切替はカット（瞬時）、ショット内は滑らかに動かす。
  */
@@ -18,7 +21,7 @@ import { type Course, curvatureAt, isOnTurn, pointAt, raceU } from '../../core/t
 import type { CameraMode } from '../types';
 import { STAND_BASE_Y, STAND_Z } from './environment';
 
-export type Shot = 'gate' | 'wide' | 'leaders' | 'side' | 'corner' | 'headon' | 'finishline' | 'follow';
+export type Shot = 'gate' | 'wide' | 'leaders' | 'side' | 'corner' | 'turn4' | 'headon' | 'finishline' | 'follow';
 
 export interface DirectorHorse {
   x: number;
@@ -41,7 +44,22 @@ export interface DirectorInput {
   distance: number;
   started: boolean;
   aspect: number;
+  /** from から各 targets への視線のうち、設備に遮られている割合（0〜1）。省略時は遮蔽を考えない */
+  occlusion?: (from: THREE.Vector3, targets: THREE.Vector3[]) => number;
 }
+
+/** 最終コーナーのカメラの候補（コースの外側への距離 m・高さ m）。上から順に優先 */
+const TURN4_SPOTS = [
+  { out: 34, h: 12 },
+  { out: 28, h: 15 },
+  { out: 46, h: 19 },
+  { out: 22, h: 10 },
+  { out: 40, h: 26 },
+];
+/** その他の固定カメラ：遮られたときに持ち上げる高さ */
+const LIFTS = [0, 6, 12, 20];
+/** 最終コーナーを含む最後の区間（ゴールまでの距離） */
+const FINAL_TURN_REM = 760;
 
 /**
  * 追従フィルタ。対象の速度（馬の速度から分かる）で先読みしてから、残りの差だけを指数平滑する。
@@ -82,6 +100,9 @@ export class CameraDirector {
   private camPos = new Tracker(2.5);
   private fov = 30;
   private firstFinish = Infinity;
+  private spot = 0;
+  private lift = 0;
+  private lastCheck = -100;
 
   constructor(private camera: THREE.PerspectiveCamera) {}
 
@@ -100,6 +121,7 @@ export class CameraDirector {
       case 'side':
         return 'side';
       case 'corner':
+        if (rem < FINAL_TURN_REM && rem > 300) return 'turn4';
         return isOnTurn(inp.course, raceU(inp.course, D, leadX)) ? 'corner' : 'leaders';
       case 'stretch':
         return rem < 45 || finished > 0 ? 'finishline' : 'headon';
@@ -113,8 +135,10 @@ export class CameraDirector {
     if (finished > 0) return finished >= Math.min(3, inp.horses.length) && inp.time - this.firstFinish > 3 ? 'leaders' : 'finishline';
     if (rem < 45) return 'finishline';
     if (homeStraight && rem < 420) return this.reducedMotion ? 'leaders' : 'headon';
-    if (rem < 650) return 'leaders';
     const onTurn = isOnTurn(inp.course, raceU(inp.course, D, leadX));
+    // 最終コーナー〜直線の入口：外側から横長に追う
+    if (rem < FINAL_TURN_REM && (onTurn || homeStraight || this.shot === 'turn4')) return 'turn4';
+    if (rem < 650) return 'leaders';
     if (this.reducedMotion) return onTurn ? 'wide' : 'leaders';
     // コーナーは全景で入り、途中から内側のコーナーカメラへ
     if (onTurn) {
@@ -128,6 +152,39 @@ export class CameraDirector {
     if (this.shot === 'side') return elapsed > 11 ? 'leaders' : 'side';
     if (this.shot === 'leaders') return elapsed > 9 ? 'side' : 'leaders';
     return 'side';
+  }
+
+  /**
+   * 候補の位置（make(i)）のうち、被写体（先頭3頭と馬群の中心）が遮られないものを選ぶ。
+   * 確認はショットの切替時と0.5秒ごと。今の候補が見通せる間は変えない（無駄に動かさない）。
+   */
+  private chooseSpot(inp: DirectorInput, cut: boolean, group: DirectorHorse[], make: (i: number) => THREE.Vector3, n: number, kind: 'spot' | 'lift' = 'spot'): THREE.Vector3 {
+    let cur = kind === 'spot' ? this.spot : this.lift;
+    if (cut) cur = 0;
+    const check = inp.occlusion && (cut || inp.time - this.lastCheck > 0.5 || inp.time < this.lastCheck);
+    if (check && inp.occlusion) {
+      this.lastCheck = inp.time;
+      const targets = group.slice(0, 3).map((h) => new THREE.Vector3(h.wx, h.wy + 1.4, h.wz));
+      const c = new THREE.Vector3();
+      group.forEach((h) => c.add(new THREE.Vector3(h.wx, h.wy + 1.2, h.wz)));
+      targets.push(c.divideScalar(Math.max(1, group.length)));
+      if (inp.occlusion(make(cur), targets) > 0) {
+        let best = cur;
+        let bestBlocked = Infinity;
+        for (let i = 0; i < n; i++) {
+          const b = inp.occlusion(make(i), targets);
+          if (b < bestBlocked) {
+            best = i;
+            bestBlocked = b;
+          }
+          if (b === 0) break;
+        }
+        cur = best;
+      }
+    }
+    if (kind === 'spot') this.spot = cur;
+    else this.lift = cur;
+    return make(cur);
   }
 
   update(inp: DirectorInput) {
@@ -170,6 +227,11 @@ export class CameraDirector {
         group = ranked;
         minR = 9;
         break;
+      case 'turn4':
+        // 先頭だけでなく後続の馬群も入れる（最大8頭）
+        group = ranked.slice(0, Math.min(7, ranked.length));
+        minR = 10;
+        break;
       default:
         group = ranked.slice(0, Math.min(5, ranked.length));
         minR = this.shot === 'side' ? 6.5 : 9;
@@ -179,7 +241,7 @@ export class CameraDirector {
     center.divideScalar(group.length);
     let radius = minR;
     group.forEach((h) => (radius = Math.max(radius, Math.hypot(h.wx - center.x, h.wz - center.z) + 3)));
-    radius = Math.min(radius, this.shot === 'wide' ? 140 : 40);
+    radius = Math.min(radius, this.shot === 'wide' ? 140 : this.shot === 'turn4' ? 34 : 40);
     this.subjectRadius = radius;
     const packX = group.reduce((a, h) => a + h.x, 0) / group.length;
     const packLane = group.reduce((a, h) => a + h.lane, 0) / group.length;
@@ -221,6 +283,18 @@ export class CameraDirector {
         margin = 1.3;
         break;
       }
+      case 'turn4': {
+        // コースの外側（右回りでは進行方向の左）の撮影台から、馬群と同じ位置で横に見る
+        const u = raceU(course, D, packX) - 4;
+        const spot = this.chooseSpot(inp, cut, group, (i) => {
+          const sp = TURN4_SPOTS[i];
+          const q = pointAt(course, u, course.width + sp.out);
+          return new THREE.Vector3(q.x, q.y + sp.h, q.z);
+        }, TURN4_SPOTS.length);
+        pos.copy(spot);
+        margin = 1.18;
+        break;
+      }
       case 'headon': {
         // 直線の先（1コーナー手前）の外側から、直線を正面に見る
         const p = pointAt(course, course.finishU + 85, course.width + 5);
@@ -246,6 +320,12 @@ export class CameraDirector {
       }
     }
 
+    // 固定カメラ：遮られていれば持ち上げる（ショットの切替時と0.5秒ごとに確認）
+    if (this.shot !== 'turn4' && this.shot !== 'follow') {
+      const base = pos.clone();
+      const lifted = this.chooseSpot(inp, cut, group, (i) => base.clone().add(new THREE.Vector3(0, LIFTS[i], 0)), LIFTS.length, 'lift');
+      pos.copy(lifted);
+    }
     if (cut) {
       this.look.reset(lookTarget);
       this.camPos.reset(pos);
@@ -255,8 +335,10 @@ export class CameraDirector {
     group.forEach((h) => vel.add(new THREE.Vector3(Math.cos(h.heading) * h.v, 0, Math.sin(h.heading) * h.v)));
     vel.divideScalar(group.length);
     // 進行方向に少し空間を空ける（リードルーム）。正面・後方からのショットでは不要
-    if (this.shot === 'side' || this.shot === 'leaders' || this.shot === 'wide') lookTarget.addScaledVector(vel, 0.15);
-    const movingCam = this.shot === 'side' || this.shot === 'follow';
+    if (this.shot === 'side' || this.shot === 'leaders' || this.shot === 'wide' || this.shot === 'turn4') lookTarget.addScaledVector(vel, 0.15);
+    // 最終コーナーは注視点の高さを固定し、縦に振らない
+    if (this.shot === 'turn4') lookTarget.y = group.reduce((a, h) => a + h.wy, 0) / group.length + 1.2;
+    const movingCam = this.shot === 'side' || this.shot === 'follow' || this.shot === 'turn4';
     const look = this.look.update(lookTarget, vel, dt);
     const cam = this.camPos.update(pos, movingCam ? vel : new THREE.Vector3(), dt);
 
