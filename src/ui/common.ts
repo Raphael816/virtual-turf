@@ -1,6 +1,6 @@
 import type { RaceCard, RaceEntry } from '../core/meeting';
 import { type RaceRuntime, type RaceStatus, STATUS_LABEL, raceStatus } from '../core/raceflow';
-import { GOING_LABEL, SURFACE_LABEL, TIME_LABEL, WEATHER_LABEL } from '../core/sim';
+import { GOING_LABEL, SURFACE_LABEL, TIME_LABEL, WEATHER_LABEL, courseShort } from '../core/sim';
 import { type Horse, HORSE_BY_ID } from '../data/roster';
 import { store } from './store';
 import { countdown, esc } from './util';
@@ -29,7 +29,7 @@ export function statusChip(status: RaceStatus): string {
 
 export function surfaceChip(card: RaceCard): string {
   const c = card.conditions;
-  return `<span class="chip chip-${c.surface}">${SURFACE_LABEL[c.surface]}${c.distance}m</span>`;
+  return `<span class="chip chip-${c.surface}">${courseShort(c)}</span>`;
 }
 
 export function conditionText(card: RaceCard): string {

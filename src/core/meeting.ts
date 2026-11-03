@@ -44,20 +44,22 @@ export interface RaceCard {
 interface RacePlan {
   name: string;
   surface: Surface;
+  layout?: 'inner' | 'outer';
   distances: number[];
   timeOfDay: TimeOfDay;
   field: [number, number];
 }
 
+/** 中山を参考にしたコースで一般的な距離（芝外回り 1200/1600/2200、芝内回り 2000/2500、ダート 1200/1800） */
 const PLAN: RacePlan[] = [
-  { name: '暁雲特別', surface: 'dirt', distances: [1200, 1400], timeOfDay: 'day', field: [9, 12] },
-  { name: '翠嶺特別', surface: 'turf', distances: [1400, 1600], timeOfDay: 'day', field: [9, 12] },
+  { name: '暁雲特別', surface: 'dirt', distances: [1200], timeOfDay: 'day', field: [9, 12] },
+  { name: '翠嶺特別', surface: 'turf', layout: 'outer', distances: [1600], timeOfDay: 'day', field: [9, 12] },
   { name: '湖月ステークス', surface: 'dirt', distances: [1800], timeOfDay: 'day', field: [10, 13] },
-  { name: '星見坂賞', surface: 'turf', distances: [1600, 1800], timeOfDay: 'day', field: [10, 14] },
-  { name: '灯台岬ステークス', surface: 'turf', distances: [2000, 2200], timeOfDay: 'day', field: [10, 14] },
-  { name: '銀砂ダートマイル', surface: 'dirt', distances: [1600], timeOfDay: 'dusk', field: [11, 14] },
-  { name: '宵灯スプリント', surface: 'turf', distances: [1200], timeOfDay: 'dusk', field: [11, 14] },
-  { name: '翠ヶ原記念', surface: 'turf', distances: [2400], timeOfDay: 'night', field: [12, 14] },
+  { name: '星見坂賞', surface: 'turf', layout: 'inner', distances: [2000], timeOfDay: 'day', field: [10, 14] },
+  { name: '灯台岬ステークス', surface: 'turf', layout: 'outer', distances: [1200], timeOfDay: 'day', field: [10, 14] },
+  { name: '銀砂ステークス', surface: 'dirt', distances: [1800], timeOfDay: 'dusk', field: [11, 14] },
+  { name: '宵灯特別', surface: 'turf', layout: 'outer', distances: [2200], timeOfDay: 'dusk', field: [11, 14] },
+  { name: '翠ヶ原記念', surface: 'turf', layout: 'inner', distances: [2500], timeOfDay: 'night', field: [12, 14] },
 ];
 
 const WEATHERS: Weather[] = ['sunny', 'cloudy', 'drizzle', 'rain'];
@@ -104,6 +106,7 @@ export async function createMeeting(meetingId: string, seedFn: () => string = se
     const distance = rng.pick(plan.distances);
     const conditions: RaceConditions = {
       surface: plan.surface,
+      ...(plan.layout ? { layout: plan.layout } : {}),
       distance,
       weather,
       going: GOINGS[goingIdx],

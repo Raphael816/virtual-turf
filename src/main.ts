@@ -185,6 +185,7 @@ async function boot(): Promise<void> {
   });
   window.addEventListener('hashchange', route);
   route();
+  if (store.engineMigrated) toast('レースの計算方式を更新したため、新しい開催を始めました。未確定だった投票は返還しました。');
 }
 
 boot().catch((err) => {

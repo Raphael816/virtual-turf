@@ -15,7 +15,7 @@ export const INITIAL_GRANT = 10_000;
 export const REFILL_AMOUNT = 5_000;
 export const REFILL_THRESHOLD = 1_000;
 
-export type LedgerKind = 'grant' | 'bet' | 'payout' | 'refill';
+export type LedgerKind = 'grant' | 'bet' | 'payout' | 'refill' | 'refund';
 
 export interface LedgerEntry {
   id: string;
@@ -28,7 +28,8 @@ export interface LedgerEntry {
   ticketId?: string;
 }
 
-export type TicketStatus = 'open' | 'won' | 'lost';
+/** refunded：レースが実施されなかった（エンジン更新で開催を作り直した等）ため返還 */
+export type TicketStatus = 'open' | 'won' | 'lost' | 'refunded';
 
 export interface Ticket {
   id: string;
@@ -209,6 +210,27 @@ export async function settleRace(
   });
   if (totalStake === 0) return state;
   const audit = await appendAudit(state.audit, 'settle', { race: raceId, stake: totalStake, payout: totalPayout }, ts);
+  return { ...state, balance, tickets, ledger, audit };
+}
+
+/**
+ * 指定したレースの未確定の券を返還する（賭け金をそのまま戻す）。
+ * シミュレーションのエンジンが更新されて、保存済みの開催を同じ結果で再現できなくなった場合などに使う。
+ */
+export async function refundRaces(state: AppState, raceIds: string[], ts: number, reason: string): Promise<AppState> {
+  const ids = new Set(raceIds);
+  let balance = state.balance;
+  const ledger = [...state.ledger];
+  let total = 0;
+  const tickets = state.tickets.map((t) => {
+    if (!ids.has(t.raceId) || t.status !== 'open') return t;
+    balance += t.stake;
+    total += t.stake;
+    ledger.push({ id: newId('l', ts), ts, kind: 'refund', amount: t.stake, balance, raceId: t.raceId, ticketId: t.id });
+    return { ...t, status: 'refunded' as const, payout: t.stake, settledAt: ts };
+  });
+  if (total === 0) return state;
+  const audit = await appendAudit(state.audit, 'refund', { races: raceIds, amount: total, reason }, ts);
   return { ...state, balance, tickets, ledger, audit };
 }
 

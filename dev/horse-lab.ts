@@ -44,7 +44,7 @@ const camera = new THREE.PerspectiveCamera(30, W / H, 0.1, 200);
   let x = 0;
   for (let s = 0; s <= steps; s++) {
     x += v * (s ? dt : 0);
-    horses.forEach((h, i) => h.update(x + (i - 1) * 0.0, (i - 1) * 2.4, 0, v, s ? dt : 0, v > 14 ? 1 : 0));
+    horses.forEach((h, i) => h.update(x, 0, (i - 1) * 2.4, 0, 0, v, s ? dt : 0, v > 14 ? 1 : 0));
   }
   const cx = x;
   if (view === 'side') { camera.fov = 30; camera.position.set(cx + 0.4, 1.4, 12); camera.lookAt(cx + 0.4, 1.1, 0); }

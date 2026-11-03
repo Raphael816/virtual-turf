@@ -269,6 +269,15 @@ function hairStrandTexture(): THREE.Texture {
   return t;
 }
 
+/** 頂点色を持たないジオメトリ（球・円錐など）に単色の頂点色を付ける（頂点色マテリアルで黒くならないように） */
+function paint<T extends THREE.BufferGeometry>(g: T, c: THREE.Color): T {
+  const n = g.getAttribute('position').count;
+  const a = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) a.set([c.r, c.g, c.b], i * 3);
+  g.setAttribute('color', new THREE.BufferAttribute(a, 3));
+  return g;
+}
+
 let blobTex: THREE.Texture | null = null;
 function blobShadowTexture(): THREE.Texture {
   if (blobTex) return blobTex;
@@ -297,6 +306,7 @@ interface LegRig {
 
 export interface Landing {
   x: number;
+  y: number;
   z: number;
   fore: boolean;
 }
@@ -329,6 +339,9 @@ export class HorseModel {
   private phase: number;
   private headCarriage: number;
   private size: number;
+  private torso!: THREE.Mesh;
+  private nostrils: THREE.Mesh[] = [];
+  private whip!: THREE.Mesh;
   private prevHeading = 0;
   private roll = 0;
   private bobSmooth = 0;
@@ -431,7 +444,8 @@ export class HorseModel {
     };
 
     this.root.add(this.body);
-    this.root.scale.setScalar(this.size);
+    // 体格の個体差：体長・体高・幅を別々に少し変える
+    this.root.scale.set(this.size * (0.97 + rnd() * 0.06), this.size * (0.975 + rnd() * 0.05), this.size * (0.96 + rnd() * 0.08));
 
     // ---- 胴 ----
     const torsoK = torsoKeys();
@@ -447,6 +461,7 @@ export class HorseModel {
       coat,
     );
     this.body.add(torso);
+    this.torso = torso;
 
     // ---- 首（付け根を中心に振る） ----
     const pivot = new THREE.Vector3(0.6, 1.42, 0);
@@ -454,8 +469,8 @@ export class HorseModel {
     const nk = (x: number, y: number, top: number, bot: number, side: number) =>
       sec(x - pivot.x, y - pivot.y, 0, top, bot, side, { n: 2.2, topNarrow: 0.35, bottomNarrow: 0.1 });
     const neckKeys = [
-      nk(0.52, 1.3, 0.3, 0.36, 0.215),
-      nk(0.72, 1.45, 0.23, 0.26, 0.165),
+      nk(0.5, 1.36, 0.28, 0.26, 0.18), // 付け根は胴の中に収め、胸の下に出っ張らないようにする
+      nk(0.72, 1.48, 0.22, 0.22, 0.155),
       nk(0.93, 1.6, 0.165, 0.175, 0.125),
       nk(1.14, 1.745, 0.125, 0.135, 0.095),
       nk(1.28, 1.82, 0.11, 0.12, 0.088),
@@ -467,9 +482,14 @@ export class HorseModel {
     this.neckPivot.add(neck);
     this.body.add(this.neckPivot);
 
-    // たてがみ（首の稜線から右側に垂らす毛束）
+    // たてがみ（首の稜線から垂らす毛束を3層重ねて量感を出す）
     const crest = interpolateSections(neckKeys, 3);
-    {
+    const layers = detail === 'low' ? [{ side: 1, len: 1, off: 0 }] : [
+      { side: 1, len: 1, off: 0 },
+      { side: 1, len: 0.75, off: 0.012 },
+      { side: -0.4, len: 0.55, off: -0.01 },
+    ];
+    for (const L of layers) {
       const pos: number[] = [];
       const uv: number[] = [];
       const idx: number[] = [];
@@ -480,10 +500,10 @@ export class HorseModel {
         const tangent = b.clone().sub(a).normalize();
         const up = new THREE.Vector3(-tangent.y, tangent.x, 0);
         const root = s.c.clone().addScaledVector(up, s.top * 0.98);
-        const len = 0.1 + 0.08 * Math.sin(t * Math.PI) + rnd() * 0.03;
-        const tip = root.clone().addScaledVector(up, -len * 0.55).add(new THREE.Vector3(-0.02, 0, 0.07));
-        pos.push(root.x, root.y, root.z + 0.01, tip.x, tip.y, tip.z);
-        uv.push(t, 0, t, 1);
+        const len = (0.11 + 0.09 * Math.sin(t * Math.PI) + rnd() * 0.04) * L.len;
+        const tip = root.clone().addScaledVector(up, -len * 0.55).add(new THREE.Vector3(-0.025, 0, 0.075 * L.side));
+        pos.push(root.x, root.y, root.z + L.off, tip.x, tip.y, tip.z + L.off);
+        uv.push(t * (1.6 + L.len), 0, t * (1.6 + L.len), 1);
         if (i < crest.length - 1) {
           const k = i * 2;
           idx.push(k, k + 1, k + 2, k + 1, k + 3, k + 2);
@@ -517,6 +537,8 @@ export class HorseModel {
         capEnd: true,
         color: (p) => {
           const c = coatAt(new THREE.Vector3(p.x + 1.3, p.y + 1.8, p.z), 0.04).clone();
+          // 鼻先・唇は毛が薄く、地肌の色で暗く見える
+          if (p.x > 0.44) c.multiplyScalar(0.62 + (0.52 - p.x) * 2.5);
           if (blaze && Math.abs(p.z) < 0.03 && p.y > 0.04) c.set('#efece6');
           return c;
         },
@@ -524,7 +546,8 @@ export class HorseModel {
       coat,
     );
     this.headPivot.add(head);
-    const earG = new THREE.ConeGeometry(0.032, 0.13, 6).translate(0, 0.065, 0);
+    const headColor = coatAt(new THREE.Vector3(1.3, 1.8, 0), 0.04).clone();
+    const earG = paint(new THREE.ConeGeometry(0.032, 0.13, 6).translate(0, 0.065, 0), headColor);
     for (const s of [-1, 1]) {
       const ear = mesh(earG, coat);
       ear.position.set(0.0, 0.1, s * 0.05);
@@ -533,7 +556,12 @@ export class HorseModel {
       const e = mesh(new THREE.SphereGeometry(0.021, 10, 8), eye);
       e.position.set(0.12, 0.045, s * 0.094);
       this.headPivot.add(e);
+      // 頬（下顎の張り）
+      const jowl = mesh(paint(new THREE.SphereGeometry(0.075, 12, 9).scale(1.15, 0.9, 0.55), headColor), coat);
+      jowl.position.set(0.07, -0.07, s * 0.06);
+      this.headPivot.add(jowl);
       const nostril = mesh(new THREE.SphereGeometry(0.018, 8, 6).scale(1.4, 0.8, 0.8), dark);
+      this.nostrils.push(nostril);
       nostril.position.set(0.545, 0.0, s * 0.04);
       this.headPivot.add(nostril);
     }
@@ -561,14 +589,14 @@ export class HorseModel {
 
     // ---- 脚（1本ずつ継ぎ目のないスキンメッシュ。上腕/下腿・管骨・繋の3本の骨で変形） ----
     const legSpecs: (LegSpec & { az: number; bend: 1 | -1 })[] = [
-      { id: 'FL', fore: true, ax: 0.52, ay: 0.97, l1: 0.47, l2: 0.33, pastern: PASTERN, az: -0.125, bend: 1 },
-      { id: 'FR', fore: true, ax: 0.52, ay: 0.97, l1: 0.47, l2: 0.33, pastern: PASTERN, az: 0.125, bend: 1 },
+      { id: 'FL', fore: true, ax: 0.52, ay: 0.97, l1: 0.47, l2: 0.33, pastern: PASTERN, az: -0.115, bend: 1 },
+      { id: 'FR', fore: true, ax: 0.52, ay: 0.97, l1: 0.47, l2: 0.33, pastern: PASTERN, az: 0.115, bend: 1 },
       { id: 'HL', fore: false, ax: -0.4, ay: 1.03, l1: 0.48, l2: 0.42, pastern: PASTERN, az: -0.19, bend: -1 },
       { id: 'HR', fore: false, ax: -0.4, ay: 1.03, l1: 0.48, l2: 0.42, pastern: PASTERN, az: 0.19, bend: -1 },
     ];
     // [付け根からの深さ(m, 負は体の中), 前側半径, 後側半径, 横半径]
     const FORE_PROFILE: [number, number, number, number][] = [
-      [-0.1, 0.085, 0.085, 0.075], [0, 0.095, 0.09, 0.082], [0.18, 0.082, 0.072, 0.072], [0.36, 0.06, 0.052, 0.056],
+      [-0.22, 0.06, 0.06, 0.05], [-0.06, 0.085, 0.08, 0.07], [0.06, 0.09, 0.085, 0.078], [0.2, 0.08, 0.07, 0.07], [0.36, 0.06, 0.052, 0.056],
       [0.47, 0.062, 0.056, 0.064], [0.52, 0.045, 0.045, 0.047], [0.62, 0.036, 0.045, 0.038], [0.76, 0.036, 0.046, 0.039],
       [0.8, 0.05, 0.056, 0.052], [0.84, 0.045, 0.048, 0.046], [0.9, 0.038, 0.04, 0.04], [0.93, 0.045, 0.045, 0.047],
     ];
@@ -656,14 +684,15 @@ export class HorseModel {
       const uv: number[] = [];
       const idx: number[] = [];
       // 縦の毛束と横の毛束を十字に組む（どの角度から見ても厚みが出る）
-      for (const plane of [0, 1]) {
+      for (const plane of [0, 1, 2]) {
         const base = pos.length / 3;
         for (let r = 0; r <= rows; r++) {
           const t = r / rows;
           const x = -t * L;
           const w = plane === 0 ? 0.05 + 0.13 * Math.sin(Math.min(1, t * 1.3) * Math.PI * 0.5) : 0.04 + 0.1 * t;
           if (plane === 0) pos.push(x, w * 0.5, 0, x, -w * 0.5, 0);
-          else pos.push(x, 0, w * 0.5, x, 0, -w * 0.5);
+          else if (plane === 1) pos.push(x, 0, w * 0.5, x, 0, -w * 0.5);
+          else pos.push(x, w * 0.35, w * 0.35, x, -w * 0.35, -w * 0.35);
           uv.push(0, 1 - t, 1, 1 - t);
           if (r < rows) {
             const k = base + r * 2;
@@ -783,6 +812,14 @@ export class HorseModel {
       glove.position.y = -0.27;
       const hand = s < 0 ? this.handL : this.handR;
       hand.position.y = -0.27;
+      if (s > 0) {
+        // 鞭（右手。先端が後ろ下を向く）
+        const whip = mesh(new THREE.CylinderGeometry(0.006, 0.009, 0.68, 5).translate(0, -0.34, 0), boots);
+        whip.position.y = -0.27;
+        whip.rotation.z = -2.2;
+        fore.add(whip);
+        this.whip = whip;
+      }
       fore.add(fa, glove, hand);
       upper.add(fore);
       this.jockeyTorso.add(upper);
@@ -842,7 +879,7 @@ export class HorseModel {
    * @param drive 追い動作の強さ 0〜1（最後の直線）
    * @returns このフレームで着地した蹄（世界座標）
    */
-  update(x: number, z: number, heading: number, v: number, dt: number, drive: number): Landing[] {
+  update(x: number, y: number, z: number, heading: number, grade: number, v: number, dt: number, drive: number): Landing[] {
     this.landings.length = 0;
     this.time += dt;
     // 旋回に応じて内側へ傾く
@@ -853,8 +890,9 @@ export class HorseModel {
     const yawRate = dt > 0 ? dh / dt : 0;
     const targetRoll = Math.max(-0.12, Math.min(0.12, v * yawRate * 0.045));
     this.roll += (targetRoll - this.roll) * Math.min(1, dt * 4);
-    this.root.position.set(x, 0, z);
-    this.root.rotation.set(this.roll, -heading, 0, 'YXZ');
+    this.root.position.set(x, y, z);
+    // 坂では体ごと傾ける（蹄の目標は体の座標なので、斜面に沿って接地する）
+    this.root.rotation.set(this.roll, -heading, Math.atan(grade), 'YXZ');
 
     const prevPhase = this.phase;
     if (dt > 0) this.phase += strideFrequency(v, this.traits) * dt * (v < 0.3 ? 0 : 1);
@@ -900,7 +938,7 @@ export class HorseModel {
       if (ft.justLanded && v > 3) {
         const lx = ft.x * this.size;
         const lz = leg.az * this.size;
-        this.landings.push({ x: x + lx * cosH - lz * sinH, z: z + lx * sinH + lz * cosH, fore: s.fore });
+        this.landings.push({ x: x + lx * cosH - lz * sinH, y: y + grade * lx, z: z + lx * sinH + lz * cosH, fore: s.fore });
       }
     }
 
@@ -919,6 +957,15 @@ export class HorseModel {
         seg.rotation.y = this.tailSway[i];
       }
     });
+
+    // 呼吸：襲歩では1完歩に1回（前肢の着地で吐き、空中期で吸う）、静止時はゆっくり
+    const br = speed > 0.25 ? Math.sin(TAU * (p - 0.65)) : Math.sin(this.time * 1.6);
+    const amp = speed > 0.25 ? 0.014 * speed : 0.006;
+    const sy = 1 + amp * br;
+    this.torso.scale.set(1, sy, 1 + amp * 1.3 * br);
+    this.torso.position.y = -1.25 * (sy - 1); // 胴の中心を基準に膨らませる
+    for (const n of this.nostrils) n.scale.setScalar(1 + 0.35 * Math.max(0, br) * speed);
+    if (this.whip) this.whip.rotation.z = -2.2 + drive * 0.25 * Math.sin(TAU * (p - 0.1));
 
     // たてがみのなびき
     this.maneUniforms.uTime.value = this.time;

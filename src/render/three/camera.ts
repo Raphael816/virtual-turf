@@ -14,16 +14,17 @@
  * 時速60km近い馬に遅れずに滑らかに追う。ショットの切替はカット（瞬時）、ショット内は滑らかに動かす。
  */
 import * as THREE from 'three';
-import { type Course, isOnTurn, pointAt, raceU } from '../../core/track';
+import { type Course, curvatureAt, isOnTurn, pointAt, raceU } from '../../core/track';
 import type { CameraMode } from '../types';
-import { STAND_Z } from './environment';
+import { STAND_BASE_Y, STAND_Z } from './environment';
 
-export type Shot = 'gate' | 'wide' | 'leaders' | 'side' | 'headon' | 'finishline' | 'follow';
+export type Shot = 'gate' | 'wide' | 'leaders' | 'side' | 'corner' | 'headon' | 'finishline' | 'follow';
 
 export interface DirectorHorse {
   x: number;
   lane: number;
   wx: number;
+  wy: number;
   wz: number;
   heading: number;
   rank: number;
@@ -74,6 +75,8 @@ export class CameraDirector {
   readonly focus = new THREE.Vector3();
   subjectRadius = 10;
   shot: Shot = 'gate';
+  /** 開発時の確認用：注視点 */
+  readonly lookPoint = new THREE.Vector3();
   private shotStart = -100;
   private look = new Tracker(3.5);
   private camPos = new Tracker(2.5);
@@ -96,8 +99,12 @@ export class CameraDirector {
         return 'leaders';
       case 'side':
         return 'side';
-      case 'finish':
+      case 'corner':
+        return isOnTurn(inp.course, raceU(inp.course, D, leadX)) ? 'corner' : 'leaders';
+      case 'stretch':
         return rem < 45 || finished > 0 ? 'finishline' : 'headon';
+      case 'finish':
+        return 'finishline';
       default:
         break;
     }
@@ -109,7 +116,12 @@ export class CameraDirector {
     if (rem < 650) return 'leaders';
     const onTurn = isOnTurn(inp.course, raceU(inp.course, D, leadX));
     if (this.reducedMotion) return onTurn ? 'wide' : 'leaders';
-    if (onTurn) return 'wide';
+    // コーナーは全景で入り、途中から内側のコーナーカメラへ
+    if (onTurn) {
+      if (this.shot === 'corner') return 'corner';
+      if (this.shot === 'wide') return inp.time - this.shotStart > 6 ? 'corner' : 'wide';
+      return 'wide';
+    }
     if (inp.time < 12) return 'side';
     // 直線は並走カメラと主カメラを交互に
     const elapsed = inp.time - this.shotStart;
@@ -163,7 +175,7 @@ export class CameraDirector {
         minR = this.shot === 'side' ? 6.5 : 9;
     }
     const center = new THREE.Vector3();
-    group.forEach((h) => center.add(new THREE.Vector3(h.wx, 1.3, h.wz)));
+    group.forEach((h) => center.add(new THREE.Vector3(h.wx, h.wy + 1.3, h.wz)));
     center.divideScalar(group.length);
     let radius = minR;
     group.forEach((h) => (radius = Math.max(radius, Math.hypot(h.wx - center.x, h.wz - center.z) + 3)));
@@ -180,35 +192,45 @@ export class CameraDirector {
       case 'gate': {
         const u0 = raceU(course, D, 0);
         const p = pointAt(course, u0 + 22, course.width + 10);
-        pos.set(p.x, 3.6, p.z);
+        pos.set(p.x, p.y + 3.6, p.z);
         margin = 1.15;
         break;
       }
       case 'wide':
       case 'leaders': {
         // スタンド屋根の前端に据えた主カメラ。左右に少しだけドリーして角度を保つ
-        pos.set(THREE.MathUtils.clamp(center.x * 0.35, -150, 150), 37.5, STAND_Z + 1);
+        pos.set(THREE.MathUtils.clamp(center.x * 0.35, -220, 120), STAND_BASE_Y + 37.5, STAND_Z + 1);
         margin = this.shot === 'wide' ? 1.08 : 1.3;
         break;
       }
       case 'side': {
         const u = raceU(course, D, packX);
         const p = pointAt(course, u + 3, course.width + (course.surface === 'dirt' ? 5 : 9));
-        pos.set(p.x, 3.4, p.z);
+        pos.set(p.x, p.y + 3.4, p.z);
         const l = pointAt(course, u - 1, packLane);
-        lookTarget = new THREE.Vector3(l.x, 1.35, l.z);
+        lookTarget = new THREE.Vector3(l.x, l.y + 1.35, l.z);
         margin = 1.35;
         break;
       }
+      case 'corner': {
+        // コーナーの内側（内馬場）から、隊列が回ってくるのを見る
+        const u = raceU(course, D, packX);
+        const k = Math.max(1 / 400, Math.abs(curvatureAt(course, u)));
+        const p = pointAt(course, u + 30, -Math.min(0.55 / k, 80));
+        pos.set(p.x, p.y + 17, p.z);
+        margin = 1.3;
+        break;
+      }
       case 'headon': {
-        const p = pointAt(course, course.finishU + 160, course.width * 0.5);
-        pos.set(p.x, 8, p.z);
+        // 直線の先（1コーナー手前）の外側から、直線を正面に見る
+        const p = pointAt(course, course.finishU + 85, course.width + 5);
+        pos.set(p.x, p.y + 9, p.z);
         margin = 1.15;
         break;
       }
       case 'finishline': {
         const p = pointAt(course, course.finishU + 3, course.width + 16);
-        pos.set(p.x, 6.5, p.z);
+        pos.set(p.x, p.y + 6.5, p.z);
         margin = 1.6;
         break;
       }
@@ -216,8 +238,9 @@ export class CameraDirector {
         const h = group[0];
         const fx = Math.cos(h.heading);
         const fz = Math.sin(h.heading);
-        pos.set(h.wx - fx * 15 - fz * 5, 3.4, h.wz - fz * 15 + fx * 5);
-        lookTarget = new THREE.Vector3(h.wx + fx * 4, 1.3, h.wz + fz * 4);
+        // 進行方向の外側（右回りでは左）に少しずらした後方から
+        pos.set(h.wx - fx * 15 + fz * 5, h.wy + 3.4, h.wz - fz * 15 - fx * 5);
+        lookTarget = new THREE.Vector3(h.wx + fx * 4, h.wy + 1.3, h.wz + fz * 4);
         margin = 1.6;
         break;
       }
@@ -252,6 +275,7 @@ export class CameraDirector {
       this.camera.updateProjectionMatrix();
     }
     this.focus.copy(center);
+    this.lookPoint.copy(look);
     this.focusDistance = cam.distanceTo(center);
   }
 }

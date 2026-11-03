@@ -14,13 +14,15 @@ export interface HorseFrame {
   finished: boolean;
 }
 
-export type CameraMode = 'auto' | 'overview' | 'leaders' | 'side' | 'follow' | 'finish';
+export type CameraMode = 'auto' | 'overview' | 'leaders' | 'side' | 'corner' | 'stretch' | 'follow' | 'finish';
 
 export const CAMERA_LABEL: Record<CameraMode, string> = {
   auto: '自動',
   overview: '全景',
   leaders: '先頭集団',
   side: '並走',
+  corner: 'コーナー',
+  stretch: '最後の直線',
   follow: '注目馬',
   finish: 'ゴール前',
 };
