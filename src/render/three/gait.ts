@@ -21,6 +21,8 @@ export interface LegSpec {
   l2: number;
   /** 球節から蹄底までの高さ */
   pastern: number;
+  /** 静止時の蹄の前後位置（省略時は付け根から少し前） */
+  restX?: number;
 }
 
 export interface GaitTraits {
@@ -32,6 +34,8 @@ export interface GaitTraits {
   lead: 'left' | 'right';
   /** 脚の上げ方の個体差 */
   lift: number;
+  /** 着地中に蹄が体に対して動ける最大の長さ（省略時 MAX_STANCE_LENGTH） */
+  maxStance?: number;
 }
 
 const clamp = (v: number, lo: number, hi: number) => (v < lo ? lo : v > hi ? hi : v);
@@ -51,7 +55,7 @@ export const MAX_STANCE_LENGTH = 1.45;
  */
 export function dutyFactor(v: number, t: GaitTraits): number {
   const f = strideFrequency(v, t);
-  const byReach = (MAX_STANCE_LENGTH * f) / Math.max(v, 0.1);
+  const byReach = ((t.maxStance ?? MAX_STANCE_LENGTH) * f) / Math.max(v, 0.1);
   return clamp(Math.min(0.62 - 0.025 * v + t.dutyOffset, byReach), 0.15, 0.62);
 }
 
@@ -80,7 +84,7 @@ export interface FootTarget {
  * prevPhase を渡すと、着地の瞬間（justLanded）を判定する。
  */
 export function footTarget(leg: LegSpec, phase: number, prevPhase: number, v: number, t: GaitTraits): FootTarget {
-  const neutral = leg.ax + (leg.fore ? 0.06 : 0.12);
+  const neutral = leg.restX ?? leg.ax + (leg.fore ? 0.06 : 0.12);
   if (v < 0.3) return { x: neutral, y: 0, stance: true, swing: 0, stanceT: 0.5, justLanded: false };
   const f = strideFrequency(v, t);
   const duty = dutyFactor(v, t);
