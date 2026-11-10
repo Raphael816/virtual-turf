@@ -10,6 +10,7 @@
  * 後から能力が変わっても、過去のレースは同じ結果で再計算・検証できる。
  */
 import { COATS, type Grade, type Horse, HORSES, type RunningStyle, TRAINERS } from '../data/roster';
+import { generateExtended } from './ability';
 import { Rng } from './rng';
 
 export const WEEKS_PER_YEAR = 52;
@@ -121,7 +122,7 @@ function generateHorse(rng: Rng, id: string, name: string): Horse {
   const coat = rng.pick(COATS);
   const dirtType = rng.chance(0.35);
   const grade = (bias: number): Grade => GRADES[Math.max(0, Math.min(3, Math.round(1.4 + bias + rng.normal(0, 0.8))))];
-  return {
+  const h: Horse = {
     id,
     name,
     sex,
@@ -143,6 +144,7 @@ function generateHorse(rng: Rng, id: string, name: string): Horse {
     heavy: grade(0),
     note: '',
   };
+  return { ...h, ...generateExtended(h, id) };
 }
 
 /**
@@ -182,27 +184,8 @@ export function eligibleHorses(world: World): WorldHorse[] {
 
 /** 出走時点の能力の写し（レース計算に使う形）。年齢は現在の暦で数える */
 export function snapshot(h: WorldHorse, date: GameDate): Horse {
-  return {
-    id: h.id,
-    name: h.name,
-    sex: h.sex,
-    age: ageOf(h, date),
-    color: h.color,
-    coat: h.coat,
-    trainer: h.trainer,
-    speed: h.speed,
-    stamina: h.stamina,
-    accel: h.accel,
-    start: h.start,
-    temper: h.temper,
-    power: h.power,
-    style: h.style,
-    bestDistance: h.bestDistance,
-    turf: h.turf,
-    dirt: h.dirt,
-    heavy: h.heavy,
-    note: h.note,
-  };
+  const { birthYear: _b, owner: _o, status: _s, career: _c, history: _h, lastRun: _l, ...horse } = h;
+  return { ...horse, age: ageOf(h, date) };
 }
 
 /** 1週進める（開催日を開くとき） */

@@ -4,12 +4,16 @@
  * 同じ (条件, 出走馬, seed) からは常に同じ結果を返す。映像はこの走行ログを再生するだけで、
  * 描画が結果に影響することはない。モデルの全体像は docs/02-architecture.md §4.2 を参照。
  */
-import type { Grade, Horse, RunningStyle } from '../data/roster';
+import type { Horse, RunningStyle } from '../data/roster';
+import { type AptitudeBreakdown, type ExtendedAbilities, profileOf, raceAbility } from './ability';
 import { Rng } from './rng';
-import { type Surface, cornersOnRoute, courseFor, curvatureAt, gradeAt, raceU } from './track';
+import { type Surface, cornersOnRoute, courseFor, courseTraits, curvatureAt, gradeAt, raceU } from './track';
 
-/** 2.0.0: 中山を参考にした右回りのコース・起伏（坂）の影響を導入 */
-export const ENGINE_VERSION = 'sim-2.0.1';
+/**
+ * 2.0.0: 中山を参考にした右回りのコース・起伏（坂）の影響を導入
+ * 3.0.0: 能力・適性を拡張（持続力・操縦性・健康・距離の幅・回り・坂・小回り・直線・季節）、脚質の位置取りを展開で変える
+ */
+export const ENGINE_VERSION = 'sim-3.0.0';
 
 export type Weather = 'sunny' | 'cloudy' | 'drizzle' | 'rain';
 export type Going = 'good' | 'yielding' | 'soft' | 'heavy';
@@ -34,10 +38,12 @@ export interface RaceConditions {
   weather: Weather;
   going: Going;
   timeOfDay: TimeOfDay;
+  /** ゲーム内の月（季節の適性に使う。ない場合は季節の影響なし） */
+  month?: number;
 }
 
 export interface SimRunner {
-  horse: Horse;
+  horse: Horse & ExtendedAbilities;
   /** 馬番 */
   number: number;
 }
@@ -72,6 +78,10 @@ export interface RunnerFactors {
   gaveUpLead: boolean;
   /** 4コーナー（最終コーナー）での順位（1始まり） */
   posAtLastCorner: number;
+  /** 適性による速度補正の内訳 (m/s) */
+  breakdown: AptitudeBreakdown;
+  /** 実際の位置取り（1コーナーの位置から判定。脚質どおりとは限らない） */
+  actualStyle: RunningStyle;
 }
 
 export type SimEventType = 'late_start' | 'kakari' | 'lead' | 'duel' | 'spurt' | 'blocked' | 'fade' | 'finish';
@@ -111,8 +121,6 @@ export interface SimResult {
   factors: RunnerFactors[];
 }
 
-const GRADE_SURFACE: Record<Grade, number> = { A: 0.1, B: 0, C: -0.2, D: -0.45 };
-const GRADE_HEAVY: Record<Grade, number> = { A: 0.1, B: 0, C: -0.12, D: -0.25 };
 export const GOING_INDEX: Record<Going, number> = { good: 0, yielding: 1, soft: 2, heavy: 3 };
 const SPURT_DIST: Record<RunningStyle, number> = { nige: 490, senko: 570, sashi: 660, oikomi: 680 };
 const GAP_FRAC: Record<RunningStyle, number> = { nige: 0, senko: 0.22, sashi: 0.52, oikomi: 0.85 };
@@ -134,6 +142,20 @@ export const marginText = (m: string): string => (['ハナ', 'アタマ', 'ク�
 
 const clamp = (v: number, lo: number, hi: number) => (v < lo ? lo : v > hi ? hi : v);
 
+/**
+ * 展開の調整値（多数のレースの集計で決めた推定値。tests/style.test.ts で分布を確かめる）
+ * - relax：先頭から離れて追走する馬ほど、前を追う圧力が小さく消耗が少ない（脚を溜める）。離れ具合 0〜1 に掛ける
+ * - saveKick：スパート時に残っているスタミナが多いほど末脚が伸びる度合い
+ * - duelDrain：ハナ争いをしている馬の消耗の上乗せ
+ * - draft：他馬の直後につけたときの消耗の倍率（風よけ）
+ * - myPace：競りかけられない逃げ馬のペース（基準ペースに対する割合）
+ * - relaxDistExp：溜めの効果を距離で弱める指数（溜め × (1600/距離)^指数。長いレースほど溜めの差が積み上がりすぎないように）
+ * - respondWindow：後ろから並びかけられたときに応戦して仕掛ける範囲（予定の仕掛け地点の何倍の距離から）
+ * - fadeFloor：スタミナが尽きたときの速度の割合（スタミナが残り少ないほど、この値まで直線的に落ちる）
+ * - leaderRelax：競りかけられずに自分のペースで行く先頭の馬の溜め（後方の馬の最大の溜めに対する割合）
+ */
+export const TUNE = { relax: 0.25, saveKick: 0.07, duelDrain: 1.3, draft: 0.94, myPace: 0.99, leaderRelax: 0, fadeFloor: 0.8, relaxDistExp: 0.7, respondWindow: 1.4 };
+
 export function simulateRace(cond: RaceConditions, runners: SimRunner[], seed: string, opts: SimOptions = {}): SimResult {
   const dt = opts.dt ?? 0.1;
   const record = opts.record ?? true;
@@ -145,40 +167,31 @@ export function simulateRace(cond: RaceConditions, runners: SimRunner[], seed: s
   const cruiseFrac = 0.955 - (0.035 * (D - 1200)) / 1200;
   const goingDrain = cond.surface === 'turf' ? 1 + 0.06 * g : 1 + 0.02 * g;
 
-  // ---- 馬ごとのパラメータ（乱数の消費順は固定） ----
+  // ---- 馬ごとのパラメータ（能力・適性の効き方は ability.ts。乱数の消費順は固定） ----
+  const traits = courseTraits(course);
   const P = runners.map((r) => {
     const h = r.horse;
-    const surfGrade = cond.surface === 'turf' ? h.turf : h.dirt;
-    let aptitude = GRADE_SURFACE[surfGrade];
-    if (g >= 2) aptitude += (GRADE_HEAVY[h.heavy] * (g - 1)) / 2;
-    aptitude += cond.surface === 'dirt' ? (h.power - 70) * 0.005 : ((h.power - 70) * 0.004 * g) / 3;
-    const distDiff = (D - h.bestDistance) / 400;
-    let staminaAdj = 1;
-    if (distDiff > 0) {
-      staminaAdj -= 0.09 * distDiff;
-      aptitude -= 0.02 * distDiff;
-    } else {
-      aptitude += 0.07 * distDiff; // 距離不足：スピードの絶対値が足りない
-    }
-    const condition = rng.normal(0, 0.06);
+    const prof = profileOf(h);
+    const ab = raceAbility(prof, { surface: cond.surface, distance: D, goingIndex: g, course: traits, month: cond.month });
+    const condition = rng.normal(0, ab.conditionSd);
     const base = cond.surface === 'turf' ? 17.9 - 0.12 * g : 17.3 + 0.07 * g;
-    const vTop = base + (h.speed - 75) * 0.018 + aptitude + condition;
-    const staminaFactor = (0.75 + h.stamina / 200) * Math.max(0.55, staminaAdj);
-    const kakari = rng.chance(Math.pow((100 - h.temper) / 100, 1.5) * 0.35);
+    const vTop = base + (h.speed - 75) * 0.018 + ab.speedAdj + condition;
+    const kakari = rng.chance(ab.kakariProb);
     const kakariStart = rng.range(4, 12);
-    const kakariDur = rng.range(10, 28);
-    let startDelay = 0.1 + ((100 - h.start) / 100) * 0.3 + Math.abs(rng.normal(0, 0.06));
-    const lateStart = rng.chance(0.03 + ((100 - h.start) / 100) * 0.07);
+    const kakariDur = rng.range(10, 28) * ab.kakariDuration;
+    let startDelay = ab.startDelay + Math.abs(rng.normal(0, 0.06));
+    const lateStart = rng.chance(ab.lateStartProb);
     if (lateStart) startDelay += rng.range(0.5, 1.0);
     const spurtDist = SPURT_DIST[h.style] * clamp(D / 1600, 0.85, 1.2) + rng.normal(0, 40);
-    const gapFrac = GAP_FRAC[h.style] + rng.normal(0, 0.05);
-    const kick = rng.normal(0, 0.004);
+    const gapFrac = GAP_FRAC[h.style] + rng.normal(0, ab.positionNoise);
+    const kick = rng.normal(0, 0.004) + ab.kick;
     return {
       style: h.style,
       vTop,
-      aptitude,
+      aptitude: ab.speedAdj,
+      breakdown: ab.breakdown,
       condition,
-      staminaFactor,
+      staminaFactor: ab.staminaFactor,
       kakari,
       kakariStart,
       kakariEnd: kakariStart + (kakari ? kakariDur : 0),
@@ -187,17 +200,39 @@ export function simulateRace(cond: RaceConditions, runners: SimRunner[], seed: s
       spurtDist,
       gapFrac,
       kick,
-      aStart: 4.5 + (h.accel / 100) * 1.5,
-      aRun: 0.3 + (h.accel / 100) * 0.5,
-      // 上り坂での失速の受けやすさ（パワーがあるほど坂に強い）
-      hill: 1.5 - h.power / 100,
+      aStart: ab.aStart,
+      aRun: ab.aRun,
+      spurtDrain: ab.spurtDrain,
+      fadeThreshold: ab.fadeThreshold,
+      cornerFactor: ab.cornerFactor,
+      earlySpeed: ab.earlySpeed,
+      /** 逃げ馬がいないために押し出された先頭（自分のペースでゆったり行く） */
+      reluctantLead: false,
+      // 上り坂での失速の受けやすさ（パワーと坂適性）
+      hill: ab.hill,
     };
   });
+
+  // 脚質は目安であり、実際の位置取りは出走メンバーで変わる：
+  // - テンの速さ（ゲート・瞬発力・スピード・気性）がメンバーの中で速い馬ほど前に、遅い馬ほど後ろになる
+  // - 逃げ馬がいないときは、テンの速い先行馬がハナに立つ（スローペースになりやすい）
+  const meanEarly = P.reduce((s, p) => s + p.earlySpeed, 0) / n;
+  P.forEach((p) => {
+    p.gapFrac = Math.max(0, p.gapFrac + (meanEarly - p.earlySpeed) * 0.6);
+  });
+  if (!P.some((p) => p.style === 'nige')) {
+    const lead = P.reduce((a, p, i) => (p.style === 'senko' && (a < 0 || p.earlySpeed > P[a].earlySpeed) ? i : a), -1);
+    if (lead >= 0) {
+      P[lead].gapFrac = 0;
+      P[lead].reluctantLead = true;
+    }
+  }
 
   const paceRef = (P.reduce((s, p) => s + p.vTop, 0) / n) * cruiseFrac;
   const spread = n * 1.5;
   const expectedTime = D / paceRef;
   const spurtFrac = Math.min(0.5, 600 / D);
+  const relaxScale = Math.pow(1600 / D, TUNE.relaxDistExp);
   const drainK = (0.85 * 1.125) / (expectedTime * ((1 - spurtFrac) * Math.pow(cruiseFrac, 4) + spurtFrac));
 
   // ---- 状態 ----
@@ -295,12 +330,23 @@ export function simulateRace(cond: RaceConditions, runners: SimRunner[], seed: s
       const rem = D - xPrev[i];
       const uNow = raceU(course, D, xPrev[i]);
       const grade = gradeAt(course, uNow);
-      const fatigue = S[i] >= 0.3 ? 1 : 0.87 + 0.433 * S[i];
+      const fatigue = S[i] >= p.fadeThreshold ? 1 : TUNE.fadeFloor + ((1 - TUNE.fadeFloor) * S[i]) / p.fadeThreshold;
       const vMax = p.vTop * fatigue;
       const kakariActive = p.kakari && t >= p.kakariStart && t < p.kakariEnd;
       if (p.kakari && Math.abs(t - p.kakariStart) < dt / 2) events.push({ t, type: 'kakari', runner: i });
 
-      if (!spurting[i] && rem <= p.spurtDist * clamp(0.7 + S[i] * 0.6, 0.75, 1.25)) {
+      // 仕掛け：予定の地点に来たとき、または後ろから仕掛けてきた馬に並びかけられたとき（応戦。予定の地点に近い場合）
+      let challenged = false;
+      if (!spurting[i] && rem <= p.spurtDist * TUNE.respondWindow) {
+        for (let k = 0; k < n; k++) {
+          const dx = xPrev[i] - xPrev[k];
+          if (k !== i && spurting[k] && finishT[k] === Infinity && dx > -1 && dx < 4 && vPrev[k] > vPrev[i]) {
+            challenged = true;
+            break;
+          }
+        }
+      }
+      if (!spurting[i] && (challenged || rem <= p.spurtDist * clamp(0.7 + S[i] * 0.6, 0.75, 1.25))) {
         spurting[i] = true;
         events.push({ t, type: 'spurt', runner: i });
       }
@@ -308,11 +354,13 @@ export function simulateRace(cond: RaceConditions, runners: SimRunner[], seed: s
       let target: number;
       if (spurting[i]) {
         // 脚を溜めた馬ほど末脚が伸びる
-        target = vMax * (1 + p.kick + 0.045 * clamp(S[i] - 0.3, -0.3, 0.4));
+        target = vMax * (1 + p.kick + TUNE.saveKick * clamp(S[i] - 0.3, -0.3, 0.4));
       } else {
         const gapTarget = (gaveUp[i] ? 0.2 : p.gapFrac) * spread;
         const gap = leaderX - xPrev[i];
-        target = paceRef + clamp((gap - gapTarget) * 0.06, -0.15, 0.6);
+        // 追走する馬は先頭のペースに合わせ、目標の位置との差だけ速度を調整する（逃げ馬のペースが隊列のペースになる）
+        const lead = i === leader ? paceRef : Math.max(vPrev[leader], paceRef * 0.95);
+        target = lead + clamp((gap - gapTarget) * 0.06, -0.15, 0.6);
         if (p.style === 'nige' && !gaveUp[i]) {
           if (i === leader) {
             // 後ろから別の逃げ馬が競りかけてくればハナを譲らず応戦する
@@ -325,14 +373,17 @@ export function simulateRace(cond: RaceConditions, runners: SimRunner[], seed: s
               if (duelT[i] === 0) events.push({ t, type: 'duel', runner: i, other: rival });
               duelT[i] += dt;
             } else {
-              target = paceRef * 0.99; // 単騎逃げ：マイペース
+              target = paceRef * TUNE.myPace; // 単騎逃げ：マイペース
             }
           } else if (gap < 2.5) {
+            // ハナを奪いに行く。先頭も逃げ馬なら競り合い（ハナ争い）になる
             target += 0.4;
-            duelT[i] += dt;
+            if (P[leader].style === 'nige') duelT[i] += dt;
           }
           if (i !== leader && duelT[i] > 22) gaveUp[i] = true;
         }
+        // 押し出された先頭は、競りかけられない限り無理をしない（逃げ馬不在のスローペース）
+        if (p.reluctantLead && i === leader) target = paceRef * 0.985;
         if (kakariActive) target += 0.35;
         target = Math.min(target, vMax * 0.99);
       }
@@ -376,8 +427,10 @@ export function simulateRace(cond: RaceConditions, runners: SimRunner[], seed: s
         laneTarget[i] = Math.max(0.6, lanePrev[i] - 0.9); // 内ラチ沿いへ寄せる
       }
 
-      // 坂：上りは減速（パワーで軽減）、下りはわずかに加速
+      // 坂：上りは減速（パワーと坂適性で軽減）、下りはわずかに加速
       target *= 1 - 1.8 * Math.max(0, grade) * p.hill + 0.9 * Math.max(0, -grade);
+      // コーナー：小回り適性の低い馬は、きついコーナーで速度を落とす
+      if (Math.abs(curvatureAt(course, uNow)) > 1 / 1500) target *= p.cornerFactor;
 
       // 加減速
       if (v[i] < target) {
@@ -394,13 +447,31 @@ export function simulateRace(cond: RaceConditions, runners: SimRunner[], seed: s
       for (let k = 0; k < n; k++) {
         const dx = xPrev[k] - xPrev[i];
         if (k !== i && dx > 0.5 && dx < 4 && Math.abs(lanePrev[k] - lanePrev[i]) < 1.2) {
-          draft = 0.84;
+          draft = TUNE.draft;
           break;
         }
       }
       const ratio = vEff / p.vTop;
       const hillDrain = 1 + 6 * Math.max(0, grade) * p.hill;
-      S[i] = Math.max(0, S[i] - (drainK * ratio ** 4 * goingDrain * draft * hillDrain * (kakariActive ? 1.4 : 1) * dt) / p.staminaFactor);
+      // ハナ争い：逃げ馬どうしが 2.5m 以内で競り合っているか
+      let contested = false;
+      if (!spurting[i] && p.style === 'nige' && !gaveUp[i]) {
+        for (let k = 0; k < n; k++) {
+          if (k !== i && P[k].style === 'nige' && !gaveUp[k] && !spurting[k] && Math.abs(xPrev[k] - xPrev[i]) < 2.5) {
+            contested = true;
+            break;
+          }
+        }
+      }
+      // 持続力：スパート中の消耗の大きさ
+      const sustainK = spurting[i] ? p.spurtDrain : 1;
+      // 脚を溜める：スパート前に先頭から離れて追走している馬ほど消耗が少ない
+      let behind = spurting[i] ? 0 : clamp((leaderX - xPrev[i]) / spread, 0, 1);
+      if (!spurting[i] && i === leader && !contested) behind = TUNE.leaderRelax;
+      const relaxK = 1 - TUNE.relax * relaxScale * behind;
+      // ハナ争い：競り合っている間は消耗が大きい
+      const duelK = contested ? TUNE.duelDrain : 1;
+      S[i] = Math.max(0, S[i] - (drainK * ratio ** 4 * goingDrain * draft * hillDrain * sustainK * relaxK * duelK * (kakariActive ? 1.4 : 1) * dt) / p.staminaFactor);
       if (!flags.fade[i] && S[i] < 0.05 && rem > 200) {
         flags.fade[i] = true;
         events.push({ t, type: 'fade', runner: i });
@@ -470,9 +541,15 @@ export function simulateRace(cond: RaceConditions, runners: SimRunner[], seed: s
   const midSpeed = ((midEnd - 1) * 200) / (crossT[midEnd] - crossT[1]);
   const paceRatio = midSpeed / paceRef;
   // しきい値は多数のレースでの分布（おおよそ上位25% / 下位25%）から決めている
-  const pace: Pace = paceRatio >= 1.0056 ? 'high' : paceRatio <= 0.9946 ? 'slow' : 'middle';
+  const pace: Pace = paceRatio >= 1.0126 ? 'high' : paceRatio <= 1.0014 ? 'slow' : 'middle';
 
   const lastCorner = corners.filter((c) => c.order.length).at(-1);
+  // 実際の位置取り：最初に記録したコーナー（またはゴール前の隊列）での順位の割合
+  const firstOrder = corners.find((c) => c.order.length)?.order ?? order;
+  const actualStyleOf = (i: number): RunningStyle => {
+    const r = firstOrder.indexOf(i) / Math.max(1, n - 1);
+    return firstOrder.indexOf(i) === 0 ? 'nige' : r <= 0.35 ? 'senko' : r <= 0.75 ? 'sashi' : 'oikomi';
+  };
   const factors: RunnerFactors[] = P.map((p, i) => ({
     style: p.style,
     topSpeed: p.vTop,
@@ -486,6 +563,8 @@ export function simulateRace(cond: RaceConditions, runners: SimRunner[], seed: s
     lateStart: p.lateStart,
     gaveUpLead: gaveUp[i],
     posAtLastCorner: lastCorner ? lastCorner.order.indexOf(i) + 1 : 0,
+    breakdown: p.breakdown,
+    actualStyle: actualStyleOf(i),
   }));
 
   events.sort((a, b) => a.t - b.t);

@@ -11,10 +11,16 @@ import {
 } from '../src/core/sim';
 import { type Horse, HORSES } from '../src/data/roster';
 
+/** 追加の能力・適性を外す（テストでは基本の能力から決まる値を使い、上書きした能力が効くようにする） */
+function stripExtended(h: Horse): Horse {
+  const { sustain: _a, control: _b, health: _c, growth: _d, growthType: _e, apt: _f, ...rest } = h;
+  return rest;
+}
+
 /** 平均的な能力の馬をベースに、一部の能力だけ変えた馬を作る */
 function horse(id: string, over: Partial<Horse> = {}): Horse {
   return {
-    ...HORSES[0],
+    ...stripExtended(HORSES[0]),
     id,
     name: id,
     speed: 75,

@@ -5,7 +5,7 @@
  * - 結果決定用 seed は暗号論的乱数で生成し、ハッシュだけを事前に公開する
  */
 import { type Grade, type Horse, HORSE_BY_ID, HORSES, JOCKEYS } from '../data/roster';
-import { type World, eligibleHorses, snapshot } from './world';
+import { type World, eligibleHorses, monthOf, snapshot } from './world';
 import { Rng, secureSeed, sha256Hex } from './rng';
 import {
   ENGINE_VERSION,
@@ -126,6 +126,7 @@ export async function createMeeting(meetingId: string, seedFn: () => string = se
       weather,
       going: GOINGS[goingIdx],
       timeOfDay: plan.timeOfDay,
+      ...(world ? { month: monthOf(world.date) } : {}),
     };
 
     // 出走馬の選定：コース適性と距離適性で重み付け。
