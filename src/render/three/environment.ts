@@ -107,6 +107,9 @@ export function terrainHeight(x: number, z: number): number {
   const bz = Math.floor(z / BUCKET);
   let best = Infinity;
   let e = BASE_LEVEL;
+  // 近く（45m以内）を通るコースのうち最も低い標高。内回りと外回り・ダートが近くで高さの違う所を通るとき、
+  // 高い方に合わせると低い方のコースが地面に埋もれるため、地面は低い方に合わせる
+  let lowest = Infinity;
   for (let r = 0; r <= 3 && best === Infinity; r++) {
     for (let i = bx - r; i <= bx + r; i++) {
       for (let j = bz - r; j <= bz + r; j++) {
@@ -116,10 +119,12 @@ export function terrainHeight(x: number, z: number): number {
             best = d;
             e = s.e;
           }
+          if (d < 45 * 45 && s.e < lowest) lowest = s.e;
         }
       }
     }
   }
+  e = Math.min(e, lowest);
   const d = Math.sqrt(best);
   const w = d === Infinity ? 0 : Math.max(0, Math.min(1, 1 - (d - 25) / 140));
   return e * w + BASE_LEVEL * (1 - w);
@@ -353,8 +358,9 @@ export class Environment {
     const groundMat = new THREE.MeshStandardMaterial({ map: grass.map, normalMap: grass.normal, normalScale: new THREE.Vector2(0.6, 0.6), roughness: 0.95 });
     addMacroVariation(groundMat, 0.012, 0.22);
     // 近くは細かい格子で起伏を表し、遠くは大きな平面
-    const W = 1500;
-    const H = 1000;
+    // 近くの地面は正方形にし、遠景の平面（リング）とすき間なく重なるようにする
+    const W = 1700;
+    const H = 1700;
     const seg = big ? 8 : 12;
     const geo = new THREE.PlaneGeometry(W, H, Math.round(W / seg), Math.round(H / seg));
     geo.rotateX(-Math.PI / 2);
@@ -370,7 +376,9 @@ export class Environment {
     geo.computeVertexNormals();
     const near = new THREE.Mesh(geo, groundMat);
     near.receiveShadow = true;
-    const far = new THREE.Mesh(new THREE.PlaneGeometry(9000, 9000), groundMat);
+    // 遠景の平面はコースのある範囲（半径700m）の外だけに置く。全面に敷くと、標高の低い区間で
+    // コースより上に出て、馬が地面に沈んで見える
+    const far = new THREE.Mesh(new THREE.RingGeometry(700, 4500, 64, 1), groundMat);
     far.rotation.x = -Math.PI / 2;
     far.position.y = BASE_LEVEL - 0.3;
     this.group.add(near, far);

@@ -9,7 +9,7 @@ import { Rng } from './rng';
 import { type Surface, cornersOnRoute, courseFor, curvatureAt, gradeAt, raceU } from './track';
 
 /** 2.0.0: 中山を参考にした右回りのコース・起伏（坂）の影響を導入 */
-export const ENGINE_VERSION = 'sim-2.0.0';
+export const ENGINE_VERSION = 'sim-2.0.1';
 
 export type Weather = 'sunny' | 'cloudy' | 'drizzle' | 'rain';
 export type Going = 'good' | 'yielding' | 'soft' | 'heavy';
