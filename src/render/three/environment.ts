@@ -16,7 +16,7 @@ import * as THREE from 'three';
 import { Sky } from 'three/examples/jsm/objects/Sky.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import type { Going, TimeOfDay, Weather } from '../../core/sim';
-import { COURSES, type Course, pointAt } from '../../core/track';
+import { COURSES, type Course, HAND, pointAt } from '../../core/track';
 import { GLSL_NOISE, fbm3, noise3, seededRandom } from './noise';
 import {
   boardTexture,
@@ -49,7 +49,7 @@ export const STAND_Z = TURF.radius + TURF.width + 22;
 /** スタンドの地盤の高さ（ゴール付近のコースの標高） */
 export const STAND_BASE_Y = FINISH.y;
 /** スタンドの中心（ゴール板の少し4コーナー寄り） */
-const STAND_X = FINISH.x + 40;
+const STAND_X = FINISH.x + 40 * HAND;
 const STAND_HALF = 190;
 /** 外回りが内回りから分かれる／合流する u（内回りの座標） */
 const BRANCH_U = 669;
@@ -340,7 +340,7 @@ export class Environment {
     const legs = new THREE.Mesh(new THREE.BoxGeometry(2, 9, 2), frameMat);
     legs.position.set(0, -12, -1);
     boardGroup.add(this.board, frame, legs);
-    const bx = -40;
+    const bx = -40 * HAND;
     const bz = 70;
     const by = terrainHeight(bx, bz) + 13;
     boardGroup.scale.setScalar(0.85);

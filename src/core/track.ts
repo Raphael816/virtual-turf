@@ -4,7 +4,9 @@
  * 中山競馬場の公開データ（JRA公式サイト「コース紹介」）を参考にした **非公式の再現**。
  * JRA の図面・写真は使っていない。数値の出典と、推定で補った箇所は docs/05-course-reference.md に記載。
  *
- * - 右回り。u はホームストレッチ入口（4コーナー出口）からのラチ沿い距離
+ * - 左回り（HAND = -1）。中山は右回りだが、利用者の希望で左右を反転して左回りにしている（形・距離・起伏は同じ）。
+ *   経路は右回りで作り、最後に x を反転する。HAND = 1 にすると中山と同じ右回りに戻る
+ * - u はホームストレッチ入口（4コーナー出口）からのラチ沿い距離
  * - 芝 内回り：1周 1,667.1m、直線 310m（4コーナー出口からゴールまで）
  * - 芝 外回り：1周 1,839.7m。2コーナーで内回りから分かれ、3コーナーで合流する（形は推定）
  * - ダート：1周 1,493m、直線 308m
@@ -36,7 +38,7 @@ export interface Course {
   xs: Float32Array;
   zs: Float32Array;
   hs: Float32Array;
-  /** 曲率（右へ曲がるとき正） */
+  /** 曲率（コーナーの内側へ曲がるとき正。回り方向によらない） */
   ks: Float32Array;
   /** 標高 (m) */
   es: Float32Array;
@@ -53,6 +55,9 @@ export interface TrackPoint {
   /** 勾配（上りが正、2.24% なら 0.0224） */
   grade: number;
 }
+
+/** 回り方向：1 = 右回り（中山と同じ）、-1 = 左回り（左右反転） */
+export const HAND: 1 | -1 = -1;
 
 const STEP = 0.5;
 const STRAIGHT = 400;
@@ -174,6 +179,15 @@ function makeCourse(
 ): Course {
   const r = resample(pts);
   const n = r.xs.length;
+  if (HAND < 0) {
+    // 左右反転：位置の x と向きを鏡写しにする（曲率は「内側へ曲がると正」のまま）
+    for (let i = 0; i < n; i++) {
+      r.xs[i] = -r.xs[i];
+      let h = Math.PI - r.hs[i];
+      if (h > Math.PI) h -= TAU;
+      r.hs[i] = h;
+    }
+  }
   return {
     id,
     surface,
@@ -380,8 +394,9 @@ export function pointAt(c: Course, uRaw: number, lane: number): TrackPoint {
   const { i0, i1, t } = sample(c, uRaw);
   const heading = lerpAngle(c.hs[i0], c.hs[i1], t);
   const k = c.ks[i0] + (c.ks[i1] - c.ks[i0]) * t;
-  const x = c.xs[i0] + (c.xs[i1] - c.xs[i0]) * t + Math.sin(heading) * lane;
-  const z = c.zs[i0] + (c.zs[i1] - c.zs[i0]) * t - Math.cos(heading) * lane;
+  // lane はラチから外側への距離。外側は、右回りでは進行方向の左、左回りでは右
+  const x = c.xs[i0] + (c.xs[i1] - c.xs[i0]) * t + HAND * Math.sin(heading) * lane;
+  const z = c.zs[i0] + (c.zs[i1] - c.zs[i0]) * t - HAND * Math.cos(heading) * lane;
   const y = c.es[i0] + (c.es[i1] - c.es[i0]) * t;
   const grade = (c.es[i1] - c.es[i0]) / c.step;
   return { x, y, z, heading, onTurn: Math.abs(k) > 1 / 1500, curvature: k, grade };
