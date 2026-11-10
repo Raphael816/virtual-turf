@@ -3,10 +3,13 @@
  * 実在の競走馬・人物・競馬場・レースとは関係ありません。
  */
 
+import { type ExtendedAbilities, generateExtended } from '../core/ability';
+
 export type RunningStyle = 'nige' | 'senko' | 'sashi' | 'oikomi';
 export type Grade = 'A' | 'B' | 'C' | 'D';
 
-export interface Horse {
+/** 能力のうち speed〜power と適性の段階評価は基本、持続力・操縦性・健康・成長力・数値の適性は ExtendedAbilities */
+export interface Horse extends ExtendedAbilities {
   id: string;
   name: string;
   sex: '牡' | '牝' | 'セ';
@@ -120,7 +123,7 @@ const SEEDS: Seed[] = [
 
 export const HORSES: Horse[] = SEEDS.map((s, i) => {
   const coat = COATS[(i * 7 + 3) % COATS.length];
-  return {
+  const base: Horse = {
     id: `h${String(i + 1).padStart(2, '0')}`,
     name: s[0],
     sex: s[1],
@@ -141,6 +144,8 @@ export const HORSES: Horse[] = SEEDS.map((s, i) => {
     coat: coat.name,
     trainer: TRAINERS[(i * 3) % TRAINERS.length],
   };
+  // 追加の能力・適性（持続力・操縦性・健康・成長力・距離の幅・回り・坂など）は、既存の能力と相関させて決める
+  return { ...base, ...generateExtended(base, base.id) };
 });
 
 export const HORSE_BY_ID = new Map(HORSES.map((h) => [h.id, h]));

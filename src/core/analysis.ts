@@ -12,6 +12,8 @@ export interface FactorRow {
   name: string;
   rank: number;
   style: string;
+  /** 実際の位置取り */
+  actualStyle: string;
   posAtLastCorner: number;
   last3F: number;
   last3FRank: number;
@@ -119,6 +121,7 @@ export function analyzeRace(card: RaceCard, res: SimResult, favoriteNumber?: num
       name: horse(i).name,
       rank: rankOf(i),
       style: STYLE_LABEL[fx.style],
+      actualStyle: STYLE_LABEL[fx.actualStyle],
       posAtLastCorner: fx.posAtLastCorner,
       last3F: res.last3F[i],
       last3FRank: last3FRank(i),

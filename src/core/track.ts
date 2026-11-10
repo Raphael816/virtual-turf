@@ -463,3 +463,9 @@ export function courseBounds(): { minX: number; maxX: number; minZ: number; maxZ
   }
   return { minX, maxX, minZ, maxZ };
 }
+
+/** 適性の計算に使うコースの特徴（ability.ts） */
+export function courseTraits(c: Course): { hand: 1 | -1; straight: number; turnRadius: number; finalHill: number } {
+  const hill = elevationAt(c, c.finishU - 70) - elevationAt(c, c.finishU - 180);
+  return { hand: HAND, straight: c.finishU, turnRadius: c.radius, finalHill: Math.max(0, hill) };
+}

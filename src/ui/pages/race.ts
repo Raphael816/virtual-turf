@@ -12,6 +12,7 @@ import { analyzeRace } from '../../core/analysis';
 import { PACE_LABEL, type SimResult, courseShort, formatTime } from '../../core/sim';
 import { placeBet, quoteBet } from '../../core/state';
 import { STYLE_LABEL } from '../../data/roster';
+import { distanceMark, gradeOf, profileOf } from '../../core/ability';
 import { createViewer } from '../../render';
 import { Viewer2D } from '../../render/viewer2d';
 import { Playback, gateFrames } from '../../render/playback';
@@ -123,13 +124,13 @@ export function racePage(raceId: string): Page {
           .map((e) => {
             const h = horseOf(e);
             const key = String(e.number);
-            const surf = card.conditions.surface === 'turf' ? h.turf : h.dirt;
+            const surf = gradeOf(card.conditions.surface === 'turf' ? profileOf(h).apt.turf : profileOf(h).apt.dirt);
             return `<tr class="${selection.includes(e.number) ? 'is-selected' : ''}">
               <td>${numBadge(e.number, e.frame, 'lg')}</td>
               <td class="entry-name"><a href="#/horse/${h.id}">${esc(h.name)}</a><div class="entry-sub">${h.sex}${h.age}・${esc(e.jockey)}・${h.coat}</div></td>
               <td>${formBadges(recentRuns(e, card.id))}</td>
               <td class="hide-sm">${STYLE_LABEL[h.style]}</td>
-              <td class="hide-sm"><span class="entry-sub">${card.conditions.surface === 'turf' ? '芝' : 'ダ'}</span> <span class="grade grade-${surf}">${surf}</span> <span class="entry-sub">${h.bestDistance}m</span></td>
+              <td class="hide-sm"><span class="entry-sub">${card.conditions.surface === 'turf' ? '芝' : 'ダ'}</span> <span class="grade grade-${surf}">${surf}</span> <span class="entry-sub" title="距離適性（このレースの距離 ${card.conditions.distance}m に対して）">距離${distanceMark(profileOf(h).apt.distance, card.conditions.distance)}</span></td>
               <td class="r tnum" data-odds="win:${key}">${oddsText(b, 'win', key)}</td>
               <td class="r tnum" data-pop="${key}">${pop.indexOf(key) >= 0 ? pop.indexOf(key) + 1 : '—'}</td>
               ${fin ? `<td class="r"><b>${fin.indexOf(e.number) + 1}</b></td>` : ''}
@@ -137,7 +138,7 @@ export function racePage(raceId: string): Page {
           })
           .join('')}</tbody>
       </table></div>
-      <p class="muted" style="font-size:.82rem">近走は新しい順の着順（左が前走。1〜3着は色付き、詳細は数字に触れると表示）。馬名を選ぶと能力値・適性・競走成績が見られます。適性はA（得意）〜D（苦手）。</p>`;
+      <p class="muted" style="font-size:.82rem">近走は新しい順の着順（左が前走。1〜3着は色付き、詳細は数字に触れると表示）。馬名を選ぶと能力値・適性・競走成績が見られます。適性はA（得意）〜D（苦手）、距離は◎（得意）○△×（不向き）。</p>`;
   };
 
   const oddsTab = () => {
@@ -296,7 +297,7 @@ export function racePage(raceId: string): Page {
     const an = analyzeRace(card, res, finalPop[0] ? Number(finalPop[0]) : undefined);
     const factorRows = an.rows
       .map(
-        (r) => `<tr><td>${r.rank}</td><td>${r.number}</td><td>${esc(r.name)}</td><td>${r.style}</td>
+        (r) => `<tr><td>${r.rank}</td><td>${r.number}</td><td>${esc(r.name)}</td><td>${r.style}${r.actualStyle !== r.style ? `<span class="entry-sub">→${r.actualStyle}</span>` : ''}</td>
           <td class="r tnum">${r.posAtLastCorner || '—'}</td><td class="r tnum">${r.last3F.toFixed(1)}（${r.last3FRank}）</td>
           <td class="r tnum">${r.laneLoss.toFixed(0)}m</td><td>${r.notes.join('・') || '—'}</td></tr>`,
       )
@@ -310,7 +311,7 @@ export function racePage(raceId: string): Page {
         <details style="margin-top:8px"><summary>結果に影響した要素の内訳</summary>
           <div class="table-wrap"><table class="table nowrap" style="margin-top:8px">
             <caption class="sr-only">各馬の要素</caption>
-            <thead><tr><th>着</th><th>馬番</th><th>馬名</th><th>脚質</th><th class="r">4角</th><th class="r">上がり3F（順位）</th><th class="r">外々ロス</th><th>主な出来事</th></tr></thead>
+            <thead><tr><th>着</th><th>馬番</th><th>馬名</th><th>脚質（実際）</th><th class="r">4角</th><th class="r">上がり3F（順位）</th><th class="r">外々ロス</th><th>主な出来事</th></tr></thead>
             <tbody>${factorRows}</tbody></table></div>
           <p class="muted" style="font-size:.8rem">外々ロス＝コーナーで外を回ったことで余分に走った距離。能力・適性に加え、当日の調子と小さなゆらぎも結果に影響します。</p>
         </details>

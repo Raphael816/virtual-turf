@@ -3,6 +3,12 @@ import { type RaceConditions, type SimRunner, simulateRace } from '../src/core/s
 import { COURSES, courseFor, elevationAt, pointAt } from '../src/core/track';
 import { type Horse, HORSES } from '../src/data/roster';
 
+/** 追加の能力・適性を外す（テストでは基本の能力から決まる値を使い、上書きした能力が効くようにする） */
+function stripExtended(h: Horse): Horse {
+  const { sustain: _a, control: _b, health: _c, growth: _d, growthType: _e, apt: _f, ...rest } = h;
+  return rest;
+}
+
 describe('中山を参考にしたコース（公式の数値との一致）', () => {
   it('1周の距離：芝内回り 1,667.1m・芝外回り 1,839.7m・ダート 1,493m', () => {
     expect(COURSES.turf.circumference).toBeCloseTo(1667.1, 0);
@@ -54,7 +60,7 @@ describe('中山を参考にしたコース（公式の数値との一致）', (
 });
 
 function horse(id: string, over: Partial<Horse> = {}): Horse {
-  return { ...HORSES[0], id, name: id, speed: 75, stamina: 75, accel: 75, start: 70, temper: 75, power: 70, style: 'senko', bestDistance: 2000, turf: 'B', dirt: 'B', heavy: 'B', ...over };
+  return { ...stripExtended(HORSES[0]), id, name: id, speed: 75, stamina: 75, accel: 75, start: 70, temper: 75, power: 70, style: 'senko', bestDistance: 2000, turf: 'B', dirt: 'B', heavy: 'B', ...over };
 }
 
 describe('起伏がレースに影響する', () => {

@@ -1,19 +1,44 @@
 import { raceStatus } from '../../core/raceflow';
 import { HORSE_BY_ID, STYLE_LABEL } from '../../data/roster';
+import { type DistanceAptitude, GROWTH_LABEL, distanceFit, gradeOf, profileOf } from '../../core/ability';
 import { ageOf, findHorse } from '../../core/world';
 import { formatTime } from '../../core/sim';
 import { type Page, conditionText, raceTitle, surfaceChip } from '../common';
 import { store } from '../store';
 import { esc, numBadge } from '../util';
 
-const STATS: { key: 'speed' | 'stamina' | 'accel' | 'start' | 'temper' | 'power'; label: string; help: string }[] = [
-  { key: 'speed', label: 'スピード', help: '最高速度' },
-  { key: 'stamina', label: 'スタミナ', help: 'バテにくさ・長距離への強さ' },
-  { key: 'accel', label: '加速', help: '末脚の鋭さ' },
-  { key: 'start', label: 'ゲート', help: 'スタートの上手さ' },
-  { key: 'temper', label: '気性', help: '高いほど落ち着いていて掛かりにくい' },
-  { key: 'power', label: 'パワー', help: 'ダート・重い馬場への強さ' },
+type StatKey = 'speed' | 'stamina' | 'burst' | 'sustain' | 'power' | 'temper' | 'control' | 'start' | 'health';
+const STATS: { key: StatKey; label: string; help: string }[] = [
+  { key: 'speed', label: 'スピード', help: '最高速度。短距離ほど差が大きく出る' },
+  { key: 'stamina', label: 'スタミナ', help: '消耗のしにくさ。長距離ほど差が大きく出る' },
+  { key: 'burst', label: '瞬発力', help: '仕掛けたときの加速と末脚の切れ。直線の短いコースで生きる' },
+  { key: 'sustain', label: '持続力', help: '高い速度を長く保つ力。スパート中に消耗しにくい' },
+  { key: 'power', label: 'パワー', help: 'ダート・重い馬場・坂への強さ' },
+  { key: 'temper', label: '気性', help: '高いほど落ち着いていて掛かりにくく、ゲートでも出遅れにくい' },
+  { key: 'control', label: '操縦性', help: '騎手の指示への反応。位置取りが正確で、掛かっても早く折り合う' },
+  { key: 'start', label: 'ゲート', help: 'スタートの反応と二の脚' },
+  { key: 'health', label: '健康', help: '体調の安定（当日の出来のぶれが小さい）。故障しにくさにも関わる（今後の段階で反映）' },
 ];
+
+/** 距離適性のグラフ（1000〜3600m で能力を発揮できる割合） */
+function distanceChart(apt: DistanceAptitude): string {
+  const W = 300;
+  const H = 90;
+  const x = (d: number) => ((d - 1000) / 2600) * (W - 20) + 10;
+  const y = (f: number) => H - 18 - f * (H - 30);
+  const pts: string[] = [];
+  for (let d = 1000; d <= 3600; d += 50) pts.push(`${x(d).toFixed(1)},${y(distanceFit(apt, d)).toFixed(1)}`);
+  const ticks = [1200, 1600, 2000, 2400, 3000, 3400]
+    .map((d) => `<line x1="${x(d)}" x2="${x(d)}" y1="${H - 18}" y2="${H - 14}" stroke="var(--muted)"/><text x="${x(d)}" y="${H - 3}" text-anchor="middle" font-size="10" fill="var(--muted)">${d}</text>`)
+    .join('');
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" style="max-width:360px" role="img" aria-label="距離適性：中心${apt.center}m、短い側の幅${apt.short}m、長い側の幅${apt.long}m">
+    <line x1="10" x2="${W - 10}" y1="${H - 18}" y2="${H - 18}" stroke="var(--border)"/>${ticks}
+    <polyline points="${pts.join(' ')}" fill="none" stroke="var(--turf)" stroke-width="2.5"/>
+    <line x1="${x(apt.center)}" x2="${x(apt.center)}" y1="${y(1)}" y2="${H - 18}" stroke="var(--turf)" stroke-dasharray="3 3"/></svg>`;
+}
+
+const aptRow = (label: string, v: number, help: string) =>
+  `<tr><th>${label}</th><td><span class="grade grade-${gradeOf(v)}">${gradeOf(v)}</span> <span class="tnum muted">${v}</span></td><td class="muted" style="font-size:.82rem">${help}</td></tr>`;
 
 /** 能力値のレーダーチャート（SVG） */
 function radar(values: number[], labels: string[]): string {
@@ -44,6 +69,7 @@ export function horsePage(horseId: string): Page {
   const h = wh ?? HORSE_BY_ID.get(horseId);
   if (!h) return { title: '馬が見つかりません', render: (el) => (el.innerHTML = '<h1>馬が見つかりません</h1><p><a href="#/races">レース一覧へ</a></p>') };
 
+  const p = profileOf(h);
   return {
     title: h.name,
     render(el) {
@@ -63,18 +89,27 @@ export function horsePage(horseId: string): Page {
         }
         <div class="grid grid-2">
           <section class="card" aria-labelledby="ab-h"><h2 id="ab-h">能力値</h2>
-            ${radar(STATS.map((s) => h[s.key]), STATS.map((s) => s.label))}
+            ${radar(STATS.map((s) => p[s.key]), STATS.map((s) => s.label))}
             <dl style="display:grid;grid-template-columns:auto 1fr auto;gap:4px 12px;font-size:.88rem;margin:8px 0 0">
-              ${STATS.map((s) => `<dt>${s.label}</dt><dd class="muted" style="margin:0">${s.help}</dd><dd style="margin:0;text-align:right" class="tnum"><b>${h[s.key]}</b></dd>`).join('')}
+              ${STATS.map((s) => `<dt>${s.label}</dt><dd class="muted" style="margin:0">${s.help}</dd><dd style="margin:0;text-align:right" class="tnum"><b>${p[s.key]}</b></dd>`).join('')}
+              <dt>成長型</dt><dd class="muted" style="margin:0">成長の時期（成長の計算は今後の段階で反映）</dd><dd style="margin:0;text-align:right"><b>${GROWTH_LABEL[p.growthType]}</b></dd>
             </dl>
           </section>
           <section class="card" aria-labelledby="apt-h"><h2 id="apt-h">適性・脚質</h2>
-            <table class="table"><tbody>
-              <tr><th>脚質</th><td><b>${STYLE_LABEL[h.style]}</b></td></tr>
-              <tr><th>最適距離</th><td><b>${h.bestDistance}m</b> 前後</td></tr>
-              <tr><th>芝</th><td><span class="grade grade-${h.turf}">${h.turf}</span></td></tr>
-              <tr><th>ダート</th><td><span class="grade grade-${h.dirt}">${h.dirt}</span></td></tr>
-              <tr><th>道悪（重・不良）</th><td><span class="grade grade-${h.heavy}">${h.heavy}</span></td></tr>
+            <p style="margin:0 0 4px"><b>脚質</b>：${STYLE_LABEL[h.style]}（目安。実際の位置取りは出走メンバーと展開で変わります）</p>
+            <p style="margin:8px 0 0"><b>距離適性</b>：得意 ${p.apt.distance.center}m（短い側の幅 ${p.apt.distance.short}m・長い側の幅 ${p.apt.distance.long}m）</p>
+            ${distanceChart(p.apt.distance)}
+            <table class="table" style="margin-top:8px"><tbody>
+              ${aptRow('芝', p.apt.turf, '')}
+              ${aptRow('ダート', p.apt.dirt, '')}
+              ${aptRow('道悪（重・不良）', p.apt.going, '雨で渋った馬場')}
+              ${aptRow('右回り', p.apt.right, '')}
+              ${aptRow('左回り', p.apt.left, '')}
+              ${aptRow('坂', p.apt.slope, 'ゴール前の上り坂')}
+              ${aptRow('小回り', p.apt.tight, 'コーナーのきついコース')}
+              ${aptRow('長い直線', p.apt.longStraight, '直線の長いコース')}
+              ${aptRow('暑さ', p.apt.heat, '真夏')}
+              ${aptRow('寒さ', p.apt.cold, '真冬')}
             </tbody></table>
             <p style="margin-top:12px">${esc(h.note)}</p>
             <p class="muted" style="font-size:.82rem">脚質の目安 — 逃げ：先頭でレースを進める／先行：前の方につける／差し：中団から伸びる／追込：後方から一気に追い込む。</p>
