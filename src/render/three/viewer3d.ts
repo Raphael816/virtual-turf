@@ -261,10 +261,18 @@ export class Viewer3D implements RaceViewer {
     g.traverse((o) => ((o as THREE.Mesh).castShadow = this.profile.shadows));
     const u0 = raceU(this.course, card.conditions.distance, 0);
     const p = pointAt(this.course, u0, 0);
-    g.position.set(p.x, p.y, p.z);
-    g.rotation.y = -p.heading;
-    this.gate = g;
-    this.scene.add(g);
+    // 発馬機はラチ沿いから外側（馬番の大きい側）へ並べる。コースの外側の向きはコースの形から求める
+    // （右回り・左回りのどちらでも、内ラチの外に正しく置かれる）
+    const q = pointAt(this.course, u0, 1);
+    const outward = new THREE.Vector3(q.x - p.x, 0, q.z - p.z).normalize();
+    const localZ = new THREE.Vector3(0, 0, 1).applyAxisAngle(new THREE.Vector3(0, 1, 0), -p.heading);
+    const holder = new THREE.Group();
+    holder.add(g);
+    g.scale.z = outward.dot(localZ) >= 0 ? 1 : -1;
+    holder.position.set(p.x, p.y, p.z);
+    holder.rotation.y = -p.heading;
+    this.gate = holder;
+    this.scene.add(holder);
   }
 
   private lookOf(card: RaceCard, i: number) {
