@@ -285,9 +285,67 @@ function buildDirt(): Course {
   return makeCourse('dirt', 'dirt', 'ダート', 22, 308, pts, [STRAIGHT, STRAIGHT + arc, 2 * STRAIGHT + arc, 0], R, (c) => turfElevation(308, c, 4.5 / 5.3));
 }
 
+/**
+ * 外回りの標高を、内回りと同じ経路を通る区間（ホームストレッチ〜1・2コーナーの途中、3コーナーの途中〜ゴール）では
+ * 内回りと完全に一致させる。外回りだけの区間は、自前の起伏の形を保ったまま両端で内回りにつながるよう補正する。
+ * （一致させないと、共通区間で同じ場所なのに外回りの方が低くなり、馬が芝の面に沈んで見える）
+ */
+function alignOuterElevation(inner: Course, outer: Course): Course {
+  const n = outer.es.length;
+  const nearestInnerU = (x: number, z: number, uGuess: number) => {
+    let best = uGuess;
+    let bd = Infinity;
+    for (let du = -40; du <= 40; du += 0.5) {
+      const u = (((uGuess + du) % inner.circumference) + inner.circumference) % inner.circumference;
+      const i = Math.floor(u / inner.step) % inner.xs.length;
+      const d = (inner.xs[i] - x) ** 2 + (inner.zs[i] - z) ** 2;
+      if (d < bd) {
+        bd = d;
+        best = u;
+      }
+    }
+    return { u: best, d: Math.sqrt(bd) };
+  };
+  const innerE = (u: number) => {
+    const i0 = Math.floor(u / inner.step) % inner.es.length;
+    const i1 = (i0 + 1) % inner.es.length;
+    const t = u / inner.step - Math.floor(u / inner.step);
+    return inner.es[i0] + (inner.es[i1] - inner.es[i0]) * t;
+  };
+  // 各点が内回りの芝の上にあるかと、対応する内回りの u
+  const shared = new Array<boolean>(n);
+  const innerU = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const uo = i * outer.step;
+    // ゴール側から測った距離が同じなら、内回りでも同じ位置（外回りの方が長い分だけずらす）
+    const guess = uo <= outer.circumference / 2 ? uo : uo - (outer.circumference - inner.circumference);
+    const r = nearestInnerU(outer.xs[i], outer.zs[i], guess);
+    // 内回りの芝の帯（幅）の上に重なっている間は、内回りと同じ高さにする
+    shared[i] = r.d < inner.width;
+    innerU[i] = r.u;
+  }
+  const es = new Float32Array(outer.es);
+  for (let i = 0; i < n; i++) if (shared[i]) es[i] = innerE(innerU[i]);
+  // 外回りだけの区間：両端の差を線形に配分して、内回りの標高へなめらかにつなぐ
+  let a = 0;
+  while (a < n && shared[a]) a++;
+  let b = a;
+  while (b < n && !shared[b]) b++;
+  if (a > 0 && b < n && b > a) {
+    const da = innerE(innerU[a - 1]) - outer.es[a - 1];
+    const db = innerE(innerU[b]) - outer.es[b];
+    for (let i = a; i < b; i++) {
+      const t = (i - a) / (b - a);
+      es[i] = outer.es[i] + da + (db - da) * t;
+    }
+  }
+  return { ...outer, es };
+}
+
+const TURF_INNER = buildTurfInner();
 export const COURSES: Record<CourseId, Course> = {
-  turf: buildTurfInner(),
-  turfOuter: buildTurfOuter(),
+  turf: TURF_INNER,
+  turfOuter: alignOuterElevation(TURF_INNER, buildTurfOuter()),
   dirt: buildDirt(),
 };
 

@@ -140,7 +140,7 @@ export class Viewer3D implements RaceViewer {
   }
 
   constructor(private opts: Viewer3DOptions) {
-    if (import.meta.env.DEV) (window as unknown as { __viewer3d: Viewer3D }).__viewer3d = this;
+    if (import.meta.env.DEV) Object.assign(window, { __viewer3d: this, __RAY: THREE.Raycaster });
     const coarse = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
     this.level = opts.quality === 'auto' ? (coarse ? 'low' : 'medium') : opts.quality;
     this.profile = PROFILES[this.level];

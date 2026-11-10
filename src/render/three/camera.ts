@@ -9,7 +9,8 @@
  * - finishline ゴール板の横
  * - follow     注目馬の後方
  * - gate       発馬機の横
- * - turn4      最終コーナー：コースの外側から馬群を横に見て、コーナーの出口から直線への動きを横長の画面で追う
+ * - turn4      最終コーナー〜直線：コースの外側（直線ではスタンド前）から馬群を横に見て、ゴール前まで横長の画面で追う
+ *              （正面からのカット headon は手動の選択肢にも使わない。実際の中継の直線は横からの追い撮りが中心）
  *
  * 遮蔽：カメラと馬の間に看板・照明塔・木・建物が入らないよう、ショットの切替時と0.5秒ごとに視線を確かめ、
  * 遮られていれば候補の中から見通しのよい位置（高さ・距離）へなめらかに移る。
@@ -56,6 +57,13 @@ const TURN4_SPOTS = [
   { out: 22, h: 10 },
   { out: 40, h: 26 },
 ];
+/** 直線：スタンド前のカメラ位置（スタンドの建物に入らないよう外ラチに近い） */
+const STRAIGHT_SPOTS = [
+  { out: 16, h: 13 },
+  { out: 12, h: 16 },
+  { out: 22, h: 20 },
+  { out: 9, h: 11 },
+];
 /** その他の固定カメラ：遮られたときに持ち上げる高さ */
 const LIFTS = [0, 6, 12, 20];
 /** 最終コーナーを含む最後の区間（ゴールまでの距離） */
@@ -101,6 +109,7 @@ export class CameraDirector {
   private fov = 30;
   private firstFinish = Infinity;
   private spot = 0;
+  private inStraight = false;
   private lift = 0;
   private lastCheck = -100;
 
@@ -124,7 +133,7 @@ export class CameraDirector {
         if (rem < FINAL_TURN_REM && rem > 300) return 'turn4';
         return isOnTurn(inp.course, raceU(inp.course, D, leadX)) ? 'corner' : 'leaders';
       case 'stretch':
-        return rem < 45 || finished > 0 ? 'finishline' : 'headon';
+        return rem < 45 || finished > 0 ? 'finishline' : 'turn4';
       case 'finish':
         return 'finishline';
       default:
@@ -134,10 +143,9 @@ export class CameraDirector {
     if (inp.time < 3) return 'gate';
     if (finished > 0) return finished >= Math.min(3, inp.horses.length) && inp.time - this.firstFinish > 3 ? 'leaders' : 'finishline';
     if (rem < 45) return 'finishline';
-    if (homeStraight && rem < 420) return this.reducedMotion ? 'leaders' : 'headon';
     const onTurn = isOnTurn(inp.course, raceU(inp.course, D, leadX));
-    // 最終コーナー〜直線の入口：外側から横長に追う
-    if (rem < FINAL_TURN_REM && (onTurn || homeStraight || this.shot === 'turn4')) return 'turn4';
+    // 最終コーナー〜直線〜ゴール前：実際の中継のように、外側（直線ではスタンド側）から馬群を横に追う。正面からのカットは使わない
+    if (rem < FINAL_TURN_REM && (onTurn || homeStraight || this.shot === 'turn4')) return this.reducedMotion ? 'leaders' : 'turn4';
     if (rem < 650) return 'leaders';
     if (this.reducedMotion) return onTurn ? 'wide' : 'leaders';
     // コーナーは全景で入り、途中から内側のコーナーカメラへ
@@ -286,11 +294,18 @@ export class CameraDirector {
       case 'turn4': {
         // コースの外側（右回りでは進行方向の左）の撮影台から、馬群と同じ位置で横に見る
         const u = raceU(course, D, packX) - 4;
+        // 直線に入ったらスタンド前の位置へ（カメラは追従フィルタでなめらかに移る）
+        const inStraight = !isOnTurn(course, u) && u <= course.finishU + 20;
+        const spots = inStraight ? STRAIGHT_SPOTS : TURN4_SPOTS;
+        if (inStraight !== this.inStraight) {
+          this.inStraight = inStraight;
+          this.spot = Math.min(this.spot, spots.length - 1);
+        }
         const spot = this.chooseSpot(inp, cut, group, (i) => {
-          const sp = TURN4_SPOTS[i];
+          const sp = spots[Math.min(i, spots.length - 1)];
           const q = pointAt(course, u, course.width + sp.out);
           return new THREE.Vector3(q.x, q.y + sp.h, q.z);
-        }, TURN4_SPOTS.length);
+        }, spots.length);
         pos.copy(spot);
         margin = 1.18;
         break;
