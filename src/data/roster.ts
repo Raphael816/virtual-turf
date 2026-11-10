@@ -50,9 +50,9 @@ export const JOCKEYS = [
   '霧島 湊', '日向 さくら', '真壁 律', '天野 陽',
 ] as const;
 
-const TRAINERS = ['風間 厩舎', '月岡 厩舎', '杉浦 厩舎', '榊 厩舎', '高槻 厩舎', '瀬尾 厩舎', '御影 厩舎'];
+export const TRAINERS = ['風間 厩舎', '月岡 厩舎', '杉浦 厩舎', '榊 厩舎', '高槻 厩舎', '瀬尾 厩舎', '御影 厩舎'];
 
-const COATS: { name: string; color: string }[] = [
+export const COATS: { name: string; color: string }[] = [
   { name: '鹿毛', color: '#7a4a2a' },
   { name: '黒鹿毛', color: '#3e2618' },
   { name: '栗毛', color: '#a5582a' },

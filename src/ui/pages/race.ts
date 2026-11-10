@@ -19,7 +19,9 @@ import { CAMERA_LABEL, type CameraMode, type RaceViewer } from '../../render/typ
 import {
   type Page,
   conditionText,
+  formBadges,
   horseOf,
+  recentRuns,
   raceTitle,
   runtimeOf,
   statusChip,
@@ -116,7 +118,7 @@ export function racePage(raceId: string): Page {
     return `
       <div class="table-wrap"><table class="table">
         <caption class="sr-only">${raceTitle(card)} 出馬表</caption>
-        <thead><tr><th>馬番</th><th>馬名・騎手</th><th>脚質</th><th>適性</th><th class="r">単勝</th><th class="r">人気</th>${fin ? '<th class="r">着順</th>' : ''}</tr></thead>
+        <thead><tr><th>馬番</th><th>馬名・騎手</th><th>近走</th><th class="hide-sm">脚質</th><th class="hide-sm">適性</th><th class="r">単勝</th><th class="r">人気</th>${fin ? '<th class="r">着順</th>' : ''}</tr></thead>
         <tbody>${card.entries
           .map((e) => {
             const h = horseOf(e);
@@ -125,8 +127,9 @@ export function racePage(raceId: string): Page {
             return `<tr class="${selection.includes(e.number) ? 'is-selected' : ''}">
               <td>${numBadge(e.number, e.frame, 'lg')}</td>
               <td class="entry-name"><a href="#/horse/${h.id}">${esc(h.name)}</a><div class="entry-sub">${h.sex}${h.age}・${esc(e.jockey)}・${h.coat}</div></td>
-              <td>${STYLE_LABEL[h.style]}</td>
-              <td><span class="entry-sub">${card.conditions.surface === 'turf' ? '芝' : 'ダ'}</span> <span class="grade grade-${surf}">${surf}</span> <span class="entry-sub">${h.bestDistance}m</span></td>
+              <td>${formBadges(recentRuns(e, card.id))}</td>
+              <td class="hide-sm">${STYLE_LABEL[h.style]}</td>
+              <td class="hide-sm"><span class="entry-sub">${card.conditions.surface === 'turf' ? '芝' : 'ダ'}</span> <span class="grade grade-${surf}">${surf}</span> <span class="entry-sub">${h.bestDistance}m</span></td>
               <td class="r tnum" data-odds="win:${key}">${oddsText(b, 'win', key)}</td>
               <td class="r tnum" data-pop="${key}">${pop.indexOf(key) >= 0 ? pop.indexOf(key) + 1 : '—'}</td>
               ${fin ? `<td class="r"><b>${fin.indexOf(e.number) + 1}</b></td>` : ''}
@@ -134,7 +137,7 @@ export function racePage(raceId: string): Page {
           })
           .join('')}</tbody>
       </table></div>
-      <p class="muted" style="font-size:.82rem">馬名を選ぶと能力値と適性の詳細が見られます。適性はA（得意）〜D（苦手）。</p>`;
+      <p class="muted" style="font-size:.82rem">近走は新しい順の着順（左が前走。1〜3着は色付き、詳細は数字に触れると表示）。馬名を選ぶと能力値・適性・競走成績が見られます。適性はA（得意）〜D（苦手）。</p>`;
   };
 
   const oddsTab = () => {

@@ -5,9 +5,11 @@
  * 利用者が画面を開いていない間に締切を過ぎたレースも、次に開いたときに同じ結果で確定する。
  */
 import { appendAudit } from './audit';
-import type { BetTypeId } from './bettypes';
-import { type RaceCard, runRace } from './meeting';
-import { type Pools, buildOddsBook, marketPools, poolTotal, settleOdds, withStakes } from './pool';
+import { BET_TYPE_BY_ID, type BetTypeId } from './bettypes';
+import { type RaceCard, createMeeting, runRace } from './meeting';
+import { type Pools, buildOddsBook, marketPools, poolTotal, settleOdds, standardOdds, withStakes } from './pool';
+import { GOING_LABEL, type SimResult, courseShort } from './sim';
+import { type RaceResultForWorld, type World, advanceWeek, recordRace } from './world';
 import type { Probabilities } from './probability';
 import { type AppState, settleRace } from './state';
 
@@ -139,9 +141,57 @@ export async function finishRace(state: AppState, raceId: string, now: number): 
   next = {
     ...next,
     audit: await appendAudit(next.audit, 'race_result', { race: raceId, order, seed: card.seed, commit: card.commit }, finishedAt),
+    // 各馬の戦績に記録する
+    world: next.world ? recordRace(next.world, resultForWorld(card, res, rt.finalPools)) : next.world,
   };
   return settleRace(next, raceId, payoutOdds, finishedAt);
 }
+
+/** レース結果を、各馬の戦績に記録する形にまとめる（確定オッズ・人気はプールがあれば付ける） */
+export function resultForWorld(card: RaceCard, res: SimResult, pools?: Pools): RaceResultForWorld {
+  const win = BET_TYPE_BY_ID.win;
+  const odds = card.entries.map((e) => (pools ? standardOdds(win, pools, String(e.number)) : null));
+  const popOrder = card.entries.map((_, i) => i).filter((i) => odds[i] !== null).sort((a, b) => odds[a]! - odds[b]!);
+  return {
+    raceId: card.id,
+    raceName: card.name,
+    course: courseShort(card.conditions),
+    going: GOING_LABEL[card.conditions.going],
+    fieldSize: card.entries.length,
+    runners: card.entries.map((e, i) => ({
+      horseId: e.horseId,
+      number: e.number,
+      rank: res.order.indexOf(i) + 1,
+      time: res.finishTimes[i],
+      margin: res.margins[i],
+      last3F: res.last3F[i],
+      passing: res.cornerOrders.map((c) => c.order.indexOf(i) + 1).join('-'),
+      jockey: e.jockey,
+      ...(odds[i] !== null ? { odds: odds[i]!, popularity: popOrder.indexOf(i) + 1 } : {}),
+    })),
+  };
+}
+
+/**
+ * 観戦しなかった開催日（画面を閉じていた間など）を、結果だけ計算して競馬界を進める。
+ * 投票はないので、オッズ・払戻は計算しない。
+ */
+export async function runUnwatchedMeeting(world: World, meetingId: string): Promise<World> {
+  let w = advanceWeek(world);
+  const cards = await createMeeting(meetingId, undefined, w);
+  for (const card of cards) {
+    const res = runRace(card, card.seed, { record: false });
+    w = recordRace(w, resultForWorld(card, res));
+  }
+  return w;
+}
+
+/** 開催日1日にかかる現実の時間の目安（最終レースの締切＋発走〜確定の時間） */
+export const MEETING_SPAN_MS = FIRST_CLOSE_MS + 7 * CLOSE_INTERVAL_MS + 3 * 60 * 1000;
+/** すべて確定してから次の開催日を自動で始めるまでの時間 */
+export const NEXT_MEETING_DELAY_MS = 60 * 1000;
+/** 画面を閉じていた間に進める開催日の上限 */
+export const MAX_CATCH_UP = 12;
 
 /**
  * 時刻 now までに締切・確定すべきレースを処理する。

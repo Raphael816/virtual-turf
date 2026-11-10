@@ -8,9 +8,11 @@ import { type AuditEntry, appendAudit } from './audit';
 import { BET_TYPE_BY_ID, type BetTypeId, betKey, validateSelection } from './bettypes';
 import { type OddsBook, payout } from './pool';
 import type { MeetingState } from './raceflow';
+import { type World, createWorld } from './world';
 import { type CheckResult, DEFAULT_LIMITS, type Limits, activeRestriction, checkBet, dayKey } from './responsible';
 
-export const SCHEMA_VERSION = 1;
+/** 2: 競馬界（world）を追加 */
+export const SCHEMA_VERSION = 2;
 export const INITIAL_GRANT = 10_000;
 export const REFILL_AMOUNT = 5_000;
 export const REFILL_THRESHOLD = 1_000;
@@ -67,6 +69,8 @@ export interface AppState {
   meeting?: MeetingState;
   /** 過去の開催も含むレースID → 表示名（収支画面用） */
   raceNames?: Record<string, string>;
+  /** 競馬界（暦・全競走馬・戦績） */
+  world: World;
 }
 
 let idCounter = 0;
@@ -87,6 +91,7 @@ export async function createInitialState(ts: number): Promise<AppState> {
     tickets: [],
     limits: { ...DEFAULT_LIMITS },
     audit: [],
+    world: createWorld(),
   };
   return { ...base, audit: await appendAudit([], 'account_created', { grant: INITIAL_GRANT }, ts) };
 }

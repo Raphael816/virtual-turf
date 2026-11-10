@@ -252,3 +252,10 @@ input[type='number'], input[type='text'], select {
 .chart text { fill: var(--muted); font-size: 11px; }
 
 .loading { color: var(--muted); padding: 24px; text-align: center; }
+
+/* ---------- 近走（着順の小さな枠） ---------- */
+.form { display: inline-flex; gap: 2px; }
+.form .fb { display: inline-grid; place-items: center; min-width: 1.35em; height: 1.35em; padding: 0 2px; border-radius: 3px; font-size: .78rem; font-variant-numeric: tabular-nums; background: var(--surface-2, #1c2a3a); color: var(--muted, #9aa); border: 1px solid var(--border); }
+.form .fb.f1 { background: #c9a227; color: #111; border-color: #c9a227; }
+.form .fb.f2 { background: #9fb3c8; color: #111; border-color: #9fb3c8; }
+.form .fb.f3 { background: #b07a4a; color: #111; border-color: #b07a4a; }

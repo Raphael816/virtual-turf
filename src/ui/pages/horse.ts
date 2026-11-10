@@ -1,5 +1,7 @@
 import { raceStatus } from '../../core/raceflow';
 import { HORSE_BY_ID, STYLE_LABEL } from '../../data/roster';
+import { ageOf, findHorse } from '../../core/world';
+import { formatTime } from '../../core/sim';
 import { type Page, conditionText, raceTitle, surfaceChip } from '../common';
 import { store } from '../store';
 import { esc, numBadge } from '../util';
@@ -38,7 +40,8 @@ function radar(values: number[], labels: string[]): string {
 }
 
 export function horsePage(horseId: string): Page {
-  const h = HORSE_BY_ID.get(horseId);
+  const wh = findHorse(store.state.world, horseId);
+  const h = wh ?? HORSE_BY_ID.get(horseId);
   if (!h) return { title: '馬が見つかりません', render: (el) => (el.innerHTML = '<h1>馬が見つかりません</h1><p><a href="#/races">レース一覧へ</a></p>') };
 
   return {
@@ -52,7 +55,12 @@ export function horsePage(horseId: string): Page {
       el.innerHTML = `
         <p style="margin-bottom:4px"><button type="button" class="btn btn-sm" data-back>← 戻る</button></p>
         <h1>${esc(h.name)}</h1>
-        <p class="muted">${h.sex}${h.age}・${h.coat}・${esc(h.trainer)}（架空）</p>
+        <p class="muted">${h.sex}${wh ? ageOf(wh, store.state.world.date) : h.age}・${h.coat}・${esc(h.trainer)}（架空）</p>
+        ${
+          wh
+            ? `<p>通算 <b>${wh.career.starts}戦${wh.career.wins}勝</b>［${wh.career.wins}-${wh.career.seconds}-${wh.career.thirds}-${wh.career.starts - wh.career.wins - wh.career.seconds - wh.career.thirds}］${wh.status === 'retired' ? '・引退' : ''}</p>`
+            : ''
+        }
         <div class="grid grid-2">
           <section class="card" aria-labelledby="ab-h"><h2 id="ab-h">能力値</h2>
             ${radar(STATS.map((s) => h[s.key]), STATS.map((s) => s.label))}
@@ -72,6 +80,23 @@ export function horsePage(horseId: string): Page {
             <p class="muted" style="font-size:.82rem">脚質の目安 — 逃げ：先頭でレースを進める／先行：前の方につける／差し：中団から伸びる／追込：後方から一気に追い込む。</p>
           </section>
         </div>
+        <section class="card" style="margin-top:12px" aria-labelledby="hist-h"><h2 id="hist-h">競走成績（直近10走）</h2>
+          ${
+            wh && wh.history.length
+              ? `<div class="table-wrap"><table class="table nowrap">
+                  <caption class="sr-only">競走成績</caption>
+                  <thead><tr><th>日付</th><th>レース</th><th>コース</th><th>馬場</th><th class="r">頭数</th><th class="r">馬番</th><th class="r">着順</th><th class="r">タイム</th><th>着差</th><th class="r">上がり</th><th>通過</th><th>騎手</th><th class="r">人気</th></tr></thead>
+                  <tbody>${wh.history
+                    .map(
+                      (r) => `<tr><td class="tnum">${r.y}年${r.w}週</td><td><a href="#/race/${encodeURIComponent(r.r)}">${esc(r.n)}</a></td><td>${esc(r.c)}</td><td>${esc(r.g)}</td>
+                        <td class="r tnum">${r.f}</td><td class="r tnum">${r.no}</td><td class="r"><b>${r.rk}</b></td><td class="r tnum">${formatTime(r.t)}</td><td>${esc(r.m || '—')}</td>
+                        <td class="r tnum">${r.l3.toFixed(1)}</td><td class="tnum">${esc(r.p)}</td><td>${esc(r.j)}</td><td class="r tnum">${r.pop ?? '—'}</td></tr>`,
+                    )
+                    .join('')}</tbody></table></div>
+                 <p class="muted" style="font-size:.8rem">画面を閉じていた間の開催日の成績（観戦しなかったレース）には、人気・オッズがありません。</p>`
+              : '<p class="muted">まだ出走していません。</p>'
+          }
+        </section>
         <section class="card" style="margin-top:12px" aria-labelledby="ent-h"><h2 id="ent-h">この開催の出走</h2>
           ${
             entries.length

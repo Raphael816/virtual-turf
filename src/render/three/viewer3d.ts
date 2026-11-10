@@ -14,7 +14,8 @@ import * as THREE from 'three';
 import type { RaceCard } from '../../core/meeting';
 import { type SimResult, courseShort } from '../../core/sim';
 import { COURSES, type Course, courseFor, pointAt, raceU } from '../../core/track';
-import { GATE_COLORS, HORSE_BY_ID } from '../../data/roster';
+import { GATE_COLORS } from '../../data/roster';
+import { entryHorse } from '../../core/meeting';
 import type { CameraMode, HorseFrame, RaceViewer } from '../types';
 import { CameraDirector, type DirectorHorse } from './camera';
 import { ClodSystem, DustSystem, HoofPrints, RainSystem } from './effects';
@@ -277,7 +278,7 @@ export class Viewer3D implements RaceViewer {
 
   private lookOf(card: RaceCard, i: number) {
     const e = card.entries[i];
-    const horse = HORSE_BY_ID.get(e.horseId)!;
+    const horse = entryHorse(e);
     return { id: horse.id, name: horse.name, coat: horse.coat, coatColor: horse.color, number: e.number, capColor: GATE_COLORS[(e.frame - 1) % 8].bg };
   }
 

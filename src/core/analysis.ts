@@ -3,8 +3,8 @@
  * シミュレーションが記録した要素（ペース・位置取り・上がり・ロス距離・詰まり・掛かり・適性・調子）から、
  * 勝因と人気馬の敗因を短い文章にする。結果を「説明できる」ことが目的で、予想や投票を勧める表現は使わない。
  */
-import { HORSE_BY_ID, STYLE_LABEL } from '../data/roster';
-import type { RaceCard } from './meeting';
+import { STYLE_LABEL } from '../data/roster';
+import { type RaceCard, entryHorse } from './meeting';
 import { GOING_INDEX, PACE_LABEL, type SimResult, marginText } from './sim';
 
 export interface FactorRow {
@@ -33,7 +33,7 @@ export function analyzeRace(card: RaceCard, res: SimResult, favoriteNumber?: num
   const n = res.n;
   const D = card.conditions.distance;
   const going = GOING_INDEX[card.conditions.going];
-  const horse = (i: number) => HORSE_BY_ID.get(card.entries[i].horseId)!;
+  const horse = (i: number) => entryHorse(card.entries[i]);
   const label = (i: number) => `${card.entries[i].number}番${horse(i).name}`;
   const rankOf = (i: number) => res.order.indexOf(i) + 1;
   const last3FOrder = Array.from({ length: n }, (_, i) => i).sort((a, b) => res.last3F[a] - res.last3F[b]);
