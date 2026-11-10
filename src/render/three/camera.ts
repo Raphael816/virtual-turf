@@ -18,7 +18,7 @@
  * 時速60km近い馬に遅れずに滑らかに追う。ショットの切替はカット（瞬時）、ショット内は滑らかに動かす。
  */
 import * as THREE from 'three';
-import { type Course, curvatureAt, isOnTurn, pointAt, raceU } from '../../core/track';
+import { type Course, HAND, curvatureAt, isOnTurn, pointAt, raceU } from '../../core/track';
 import type { CameraMode } from '../types';
 import { STAND_BASE_Y, STAND_Z } from './environment';
 
@@ -269,7 +269,7 @@ export class CameraDirector {
       case 'wide':
       case 'leaders': {
         // スタンド屋根の前端に据えた主カメラ。左右に少しだけドリーして角度を保つ
-        pos.set(THREE.MathUtils.clamp(center.x * 0.35, -220, 120), STAND_BASE_Y + 37.5, STAND_Z + 1);
+        pos.set(HAND > 0 ? THREE.MathUtils.clamp(center.x * 0.35, -220, 120) : THREE.MathUtils.clamp(center.x * 0.35, -120, 220), STAND_BASE_Y + 37.5, STAND_Z + 1);
         margin = this.shot === 'wide' ? 1.08 : 1.3;
         break;
       }
@@ -292,7 +292,7 @@ export class CameraDirector {
         break;
       }
       case 'turn4': {
-        // コースの外側（右回りでは進行方向の左）の撮影台から、馬群と同じ位置で横に見る
+        // コースの外側の撮影台から、馬群と同じ位置で横に見る
         const u = raceU(course, D, packX) - 4;
         // 直線に入ったらスタンド前の位置へ（カメラは追従フィルタでなめらかに移る）
         const inStraight = !isOnTurn(course, u) && u <= course.finishU + 20;
@@ -327,8 +327,8 @@ export class CameraDirector {
         const h = group[0];
         const fx = Math.cos(h.heading);
         const fz = Math.sin(h.heading);
-        // 進行方向の外側（右回りでは左）に少しずらした後方から
-        pos.set(h.wx - fx * 15 + fz * 5, h.wy + 3.4, h.wz - fz * 15 - fx * 5);
+        // 進行方向の外側に少しずらした後方から
+        pos.set(h.wx - fx * 15 + HAND * fz * 5, h.wy + 3.4, h.wz - fz * 15 - HAND * fx * 5);
         lookTarget = new THREE.Vector3(h.wx + fx * 4, h.wy + 1.3, h.wz + fz * 4);
         margin = 1.6;
         break;
