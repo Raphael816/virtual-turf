@@ -1,7 +1,8 @@
-import type { RaceCard, RaceEntry } from '../core/meeting';
+import { type RaceCard, type RaceEntry, entryHorse } from '../core/meeting';
 import { type RaceRuntime, type RaceStatus, STATUS_LABEL, raceStatus } from '../core/raceflow';
 import { GOING_LABEL, SURFACE_LABEL, TIME_LABEL, WEATHER_LABEL, courseShort } from '../core/sim';
-import { type Horse, HORSE_BY_ID } from '../data/roster';
+import type { Horse } from '../data/roster';
+import { type RunRecord, dateLabel, findHorse } from '../core/world';
 import { store } from './store';
 import { countdown, esc } from './util';
 
@@ -13,7 +14,7 @@ export interface Page {
   dispose?(): void;
 }
 
-export const horseOf = (e: RaceEntry): Horse => HORSE_BY_ID.get(e.horseId)!;
+export const horseOf = (e: RaceEntry): Horse => entryHorse(e);
 
 export function runtimeOf(card: RaceCard): RaceRuntime {
   return store.state.meeting!.runtime[card.id];
@@ -74,3 +75,24 @@ export const ICONS = {
   guide: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6V14M12 17.5h.01"/></svg>',
   account: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/></svg>',
 };
+
+/** ゲーム内の日付（年・月・週） */
+export function gameDateText(): string {
+  return dateLabel(store.state.world.date);
+}
+
+/** 出走表の馬の近走（このレースより前の走、新しい順） */
+export function recentRuns(e: RaceEntry, raceId: string, n = 5): RunRecord[] {
+  return (findHorse(store.state.world, e.horseId)?.history ?? []).filter((r) => r.r !== raceId).slice(0, n);
+}
+
+/** 近走の着順を小さな枠で表す（1〜3着は色付き）。title に詳細 */
+export function formBadges(runs: RunRecord[]): string {
+  if (!runs.length) return '<span class="muted" style="font-size:.8rem">初出走</span>';
+  return `<span class="form">${runs
+    .map((r) => {
+      const cls = r.rk === 1 ? 'f1' : r.rk === 2 ? 'f2' : r.rk === 3 ? 'f3' : '';
+      return `<span class="fb ${cls}" title="${r.y}年 第${r.w}週 ${esc(r.n)} ${esc(r.c)}・${esc(r.g)} ${r.f}頭${r.no}番 ${r.rk}着">${r.rk}</span>`;
+    })
+    .join('')}</span>`;
+}

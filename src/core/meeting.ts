@@ -4,7 +4,8 @@
  * - 出走表・条件は開催ID から決定論的に生成する（公開情報）
  * - 結果決定用 seed は暗号論的乱数で生成し、ハッシュだけを事前に公開する
  */
-import { type Grade, HORSE_BY_ID, HORSES, JOCKEYS } from '../data/roster';
+import { type Grade, type Horse, HORSE_BY_ID, HORSES, JOCKEYS } from '../data/roster';
+import { type World, eligibleHorses, snapshot } from './world';
 import { Rng, secureSeed, sha256Hex } from './rng';
 import {
   ENGINE_VERSION,
@@ -25,6 +26,18 @@ export interface RaceEntry {
   /** 枠番 */
   frame: number;
   jockey: string;
+  /**
+   * 出走時点の能力の写し。馬の能力は年月とともに変わるため、レースの計算・検証はこの値で行う。
+   * 古い保存データ（写しがない出走表）は既存の36頭のデータを使う。
+   */
+  horse?: Horse;
+}
+
+/** 出走表の馬の、レース計算に使う能力 */
+export function entryHorse(e: RaceEntry): Horse {
+  const h = e.horse ?? HORSE_BY_ID.get(e.horseId);
+  if (!h) throw new Error(`unknown horse ${e.horseId}`);
+  return h;
 }
 
 export interface RaceCard {
@@ -92,8 +105,10 @@ function pickWeighted<T>(rng: Rng, items: T[], weights: number[]): number {
 /**
  * 開催を生成する。`seedFn` はテスト用に差し替えられる（既定は暗号論的乱数）。
  */
-export async function createMeeting(meetingId: string, seedFn: () => string = secureSeed): Promise<RaceCard[]> {
+export async function createMeeting(meetingId: string, seedFn: () => string = secureSeed, world?: World): Promise<RaceCard[]> {
   const rng = new Rng(`meeting:${meetingId}`);
+  // 出走馬の候補：競馬界があれば、出走できる現役馬（前走から間隔が空いた馬）の出走時点の能力
+  const candidates: Horse[] = world ? eligibleHorses(world).map((h) => snapshot(h, world.date)) : HORSES;
   let weatherIdx = pickWeighted(rng, WEATHERS, [50, 30, 12, 8]);
   const usage = new Map<string, number>();
   const cards: RaceCard[] = [];
@@ -113,29 +128,31 @@ export async function createMeeting(meetingId: string, seedFn: () => string = se
       timeOfDay: plan.timeOfDay,
     };
 
-    // 出走馬の選定：コース適性と距離適性で重み付け。同じ開催での連闘は出にくくする
-    const size = rng.int(plan.field[0], plan.field[1]);
-    const pool = [...HORSES];
+    // 出走馬の選定：コース適性と距離適性で重み付け。
+    // 競馬界があるときは同じ開催日に2度は走らせない（連闘なし）。ないとき（36頭だけ）は出にくくするだけ
+    const pool = candidates.filter((h) => !world || !usage.has(h.id));
+    const size = Math.min(pool.length, rng.int(plan.field[0], plan.field[1]));
     const weights = pool.map((h) => {
       const grade = plan.surface === 'turf' ? h.turf : h.dirt;
       const fit = Math.exp(-(((distance - h.bestDistance) / 500) ** 2)) + 0.1;
       return (GRADE_WEIGHT[grade] * fit) / (1 + 2 * (usage.get(h.id) ?? 0));
     });
-    const chosen: string[] = [];
+    const chosen: Horse[] = [];
     while (chosen.length < size) {
       const idx = pickWeighted(rng, pool, weights);
-      chosen.push(pool[idx].id);
+      chosen.push(pool[idx]);
       pool.splice(idx, 1);
       weights.splice(idx, 1);
     }
-    chosen.forEach((id) => usage.set(id, (usage.get(id) ?? 0) + 1));
+    chosen.forEach((h) => usage.set(h.id, (usage.get(h.id) ?? 0) + 1));
     rng.shuffle(chosen);
     const jockeys = rng.shuffle([...JOCKEYS]);
-    const entries: RaceEntry[] = chosen.map((horseId, i) => ({
-      horseId,
+    const entries: RaceEntry[] = chosen.map((horse, i) => ({
+      horseId: horse.id,
       number: i + 1,
       frame: frameOf(size, i + 1),
-      jockey: jockeys[i],
+      jockey: jockeys[i % jockeys.length],
+      ...(world ? { horse } : {}),
     }));
 
     const id = `${meetingId}-R${r + 1}`;
@@ -157,11 +174,7 @@ export async function createMeeting(meetingId: string, seedFn: () => string = se
 
 /** 出走表と seed からレースを実行する（結果決定用・モンテカルロ用で共通） */
 export function runRace(card: Pick<RaceCard, 'id' | 'conditions' | 'entries'>, seed: string, opts?: SimOptions): SimResult {
-  const runners = card.entries.map((e) => {
-    const horse = HORSE_BY_ID.get(e.horseId);
-    if (!horse) throw new Error(`unknown horse ${e.horseId}`);
-    return { horse, number: e.number };
-  });
+  const runners = card.entries.map((e) => ({ horse: entryHorse(e), number: e.number }));
   return simulateRace(card.conditions, runners, `${card.id}|${seed}`, opts);
 }
 

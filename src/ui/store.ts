@@ -7,7 +7,8 @@
  */
 import { type RaceCard, createMeeting } from '../core/meeting';
 import { type Probabilities, estimateProbabilities } from '../core/probability';
-import { advance, openMeeting } from '../core/raceflow';
+import { MAX_CATCH_UP, MEETING_SPAN_MS, NEXT_MEETING_DELAY_MS, advance, openMeeting, runUnwatchedMeeting } from '../core/raceflow';
+import { advanceWeek } from '../core/world';
 import { ENGINE_VERSION } from '../core/sim';
 import { type AppState, createInitialState, refundRaces } from '../core/state';
 import { type KV, clearState, defaultKV, loadState, saveState } from '../core/storage';
@@ -65,6 +66,16 @@ class Store {
       this.state = { ...this.state, meeting: undefined };
       this.engineMigrated = true;
     }
+    // 締切・確定の時刻を過ぎたレースを処理する（ここでは次の開催日を自動で始めない）
+    await this.tick(false);
+    // 画面を閉じていた間の開催日を、結果だけ計算して進める（ゲーム内の時間は現実の時刻で進む）
+    const last = this.lastFinishedAt();
+    if (last !== null) {
+      const missed = Math.min(MAX_CATCH_UP, Math.floor((this.now() - last) / MEETING_SPAN_MS));
+      let w = this.state.world;
+      for (let i = 0; i < missed; i++) w = await runUnwatchedMeeting(w, `U${w.date.year}-${w.date.week + 1}-${i}`);
+      if (missed > 0) this.state = { ...this.state, world: w, meeting: undefined };
+    }
     if (!this.state.meeting) await this.newMeeting(false);
     await this.tick();
     this.save();
@@ -102,24 +113,41 @@ class Store {
     this.emit('state');
   }
 
-  /** 新しい開催を始める */
+  /** 開催日のすべてのレースが確定した時刻（未確定があれば null） */
+  lastFinishedAt(): number | null {
+    const m = this.state.meeting;
+    if (!m) return null;
+    let last = 0;
+    for (const c of m.cards) {
+      const f = m.runtime[c.id].finishedAt;
+      if (f === undefined) return null;
+      last = Math.max(last, f);
+    }
+    return last;
+  }
+
+  /** 新しい開催日を始める（ゲーム内の暦を1週進める） */
   async newMeeting(emit = true) {
     const id = `M${new Date(this.now()).toISOString().slice(0, 10).replace(/-/g, '')}-${Math.floor(this.now() / 1000) % 100000}`;
-    const cards = await createMeeting(id);
-    const next = await openMeeting(this.state, id, cards, this.now());
+    const world = advanceWeek(this.state.world);
+    const cards = await createMeeting(id, undefined, world);
+    const next = await openMeeting({ ...this.state, world }, id, cards, this.now());
     this.state = next;
     this.save();
     for (const c of cards) void this.requestProbs(c);
     if (emit) this.emit('state');
   }
 
-  private async tick() {
+  private async tick(autoNext = true) {
     if (this.busy || !this.state) return;
     this.busy = true;
     try {
       const next = await advance(this.state, this.now(), (c) => this.probsSync(c));
       if (next !== this.state) this.set(next);
       else this.emit('tick');
+      // すべて確定して少し経ったら、次の開催日（翌週）を自動で始める
+      const last = this.lastFinishedAt();
+      if (autoNext && last !== null && this.now() - last > NEXT_MEETING_DELAY_MS) await this.newMeeting();
     } finally {
       this.busy = false;
     }

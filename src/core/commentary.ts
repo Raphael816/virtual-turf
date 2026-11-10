@@ -3,8 +3,7 @@
  * 映像と同じ走行ログから作るため、実況と映像・結果が食い違うことはない。
  * 言い回しはレースIDから決まる乱数で選ぶ（同じレースなら毎回同じ実況）。
  */
-import { HORSE_BY_ID } from '../data/roster';
-import type { RaceCard } from './meeting';
+import { type RaceCard, entryHorse } from './meeting';
 import { Rng } from './rng';
 import { type SimResult, formatTime, marginText } from './sim';
 import { cornersOnRoute, COURSES } from './track';
@@ -18,7 +17,7 @@ export interface CommentaryLine {
 export function buildCommentary(card: RaceCard, res: SimResult): CommentaryLine[] {
   const rng = new Rng(`commentary:${card.id}`);
   const say = (...variants: string[]) => rng.pick(variants);
-  const name = (i: number) => `${card.entries[i].number}番${HORSE_BY_ID.get(card.entries[i].horseId)!.name}`;
+  const name = (i: number) => `${card.entries[i].number}番${entryHorse(card.entries[i]).name}`;
   const D = card.conditions.distance;
   const n = res.n;
   /** tag は重複整理用（出力には含めない） */

@@ -3,6 +3,7 @@
  * メモリ上だけで動作する。
  */
 import { type AppState, SCHEMA_VERSION } from './state';
+import { createWorld } from './world';
 
 export interface KV {
   getItem(key: string): string | null;
@@ -36,9 +37,7 @@ export function loadState(kv: KV): AppState | null {
   try {
     const raw = kv.getItem(KEY);
     if (!raw) return null;
-    const s = JSON.parse(raw) as AppState;
-    if (s.version !== SCHEMA_VERSION) return null; // 将来はここでマイグレーションする
-    return s;
+    return migrate(JSON.parse(raw));
   } catch {
     return null;
   }
@@ -59,4 +58,22 @@ export function clearState(kv: KV): void {
   } catch {
     /* noop */
   }
+}
+
+/**
+ * 古い形式の保存データを今の形式へ移行する。残高・台帳・購入履歴・監査ログ・開催はそのまま引き継ぐ。
+ * 新しすぎる（未来の）形式や壊れたデータは読み込まない。
+ */
+export function migrate(raw: unknown): AppState | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const s = { ...(raw as Record<string, unknown>) };
+  let v = Number(s.version);
+  if (!Number.isInteger(v) || v < 1 || v > SCHEMA_VERSION) return null;
+  if (v === 1) {
+    // v1 → v2：競馬界を追加
+    s.world = createWorld();
+    v = 2;
+  }
+  s.version = v;
+  return s as unknown as AppState;
 }
