@@ -46,7 +46,31 @@ export interface Life {
   injury?: Injury;
   /** 復帰後の休み明け（週）。休み明けの初戦は調子が上がりきらないことがある */
   layoff: number;
+  /**
+   * 調教による鍛え具合（能力ごと 0〜1。第4段階）。現在の能力 = 上限 × 成長曲線 × (0.97 + 0.05 × 鍛え具合)。
+   * 鍛えないと少しずつ落ち、調教の効果は上限（1）に近いほど小さくなる
+   */
+  dev?: Potential;
+  /** 仕上がり（0〜100）：強めの調教で上がり、休むと下がる。調子に反映される */
+  fitness?: number;
+  /** 調教履歴（新しい順、直近 TRAIN_HISTORY 週） */
+  train?: TrainRecord[];
 }
+
+/** 調教1回の記録（保存容量を抑えるため短いキー） */
+export interface TrainRecord {
+  y: number;
+  w: number;
+  /** メニュー */
+  m: string;
+  /** 時計・内容の評価（A〜D） */
+  e?: string;
+}
+
+/** 鍛え具合の既定値（記録のない古いデータ・既存の馬）。ふつうに調教している馬が釣り合う値で、成長曲線どおりの能力になる */
+export const DEV_DEFAULT = 0.6;
+/** 鍛え具合 → 能力の倍率（0 で 0.97、0.6 で 1.0、1 で 1.02） */
+export const devFactor = (d: number) => 0.97 + 0.05 * d;
 
 /** 年齢・週から、生まれてからの年数（JRA の馬齢は1月1日に加算。誕生は春と仮定） */
 export function bioAge(birthYear: number, date: { year: number; week: number }): number {
@@ -89,7 +113,7 @@ export function maturity(type: GrowthType, growth: number, age: number, key: Gro
 /** 現在の能力（上限 × 成長曲線） */
 export function currentAbilities(h: Pick<Horse, 'growthType' | 'growth'>, life: Life, age: number): Potential {
   const out = {} as Potential;
-  for (const k of GROWTH_KEYS) out[k] = Math.round(clamp(life.pot[k] * maturity(h.growthType ?? 'normal', h.growth ?? 60, age, k, life.peakShift), 20, 99));
+  for (const k of GROWTH_KEYS) out[k] = Math.round(clamp(life.pot[k] * maturity(h.growthType ?? 'normal', h.growth ?? 60, age, k, life.peakShift) * devFactor(life.dev?.[k] ?? DEV_DEFAULT), 20, 99));
   return out;
 }
 
@@ -110,7 +134,9 @@ export function conditionOf(life: Life, weekIndex: number): number {
   const wave = Math.sin(2 * Math.PI * (weekIndex / life.period + life.phase));
   const fatigue = -Math.max(0, life.fatigue - 30) / 70;
   const layoff = life.layoff > 0 ? -0.25 : 0;
-  return clamp(wave * 0.7 + fatigue + layoff - life.mental / 250, -1, 1);
+  // 仕上がり：50（ふつうに調教している馬の平均）を普通として、仕上がっているほど上がり、緩いと下がる
+  const fit = ((life.fitness ?? 50) - 50) / 120;
+  return clamp(wave * 0.6 + fatigue + layoff + fit - life.mental / 250, -1, 1);
 }
 
 export function conditionLabel(c: number): string {

@@ -11,7 +11,8 @@
  */
 import { COATS, type Grade, type Horse, HORSES, type RunningStyle, TRAINERS } from '../data/roster';
 import { generateExtended } from './ability';
-import { type Life, type RaceForm, afterRace, bioAge, conditionOf, currentAbilities, initLife, retireProbability, weeklyRecovery } from './lifecycle';
+import { GROWTH_KEYS, type Life, type RaceForm, afterRace, bioAge, conditionOf, currentAbilities, initLife, retireProbability, weeklyRecovery } from './lifecycle';
+import { npcPlan, train } from './training';
 import { Rng } from './rng';
 
 export const WEEKS_PER_YEAR = 52;
@@ -249,8 +250,15 @@ export function advanceWeek(world: World): World {
   const date = addWeeks(world.date, 1);
   let horses = world.horses.map((h) => {
     if (h.status !== 'active') return h;
-    const life = weeklyRecovery(h.life, h.health ?? 65);
-    const cur = currentAbilities(h, life, bioAge(h.birthYear, date));
+    const age = bioAge(h.birthYear, date);
+    let life = weeklyRecovery(h.life, h.health ?? 65);
+    // 調教（厩舎が状態を見てメニューを決める）
+    const sinceRace = h.lastRun ? weeksBetween(h.lastRun, date) : 99;
+    const cur0 = currentAbilities(h, life, age);
+    const weakest = GROWTH_KEYS.reduce((a, k) => (cur0[k] / life.pot[k] < cur0[a] / life.pot[a] ? k : a), GROWTH_KEYS[0]);
+    const seed = `${date.year}:${date.week}:${h.id}`;
+    life = train(life, npcPlan(life, sinceRace, weakest, seed), { age, health: h.health ?? 65, seed, date }).life;
+    const cur = currentAbilities(h, life, age);
     return { ...h, ...cur, life };
   });
   if (date.week === 1) horses = yearStart(horses, date);
@@ -279,7 +287,10 @@ function yearStart(horses: WorldHorse[], date: GameDate): WorldHorse[] {
     const name = makeName(rng, used);
     if (!name) break;
     const id = `y${date.year}-${String(i).padStart(3, '0')}`;
-    out.push(toWorldHorse(generateHorse(rng, id, name, 2), date, true));
+    const foal = toWorldHorse(generateHorse(rng, id, name, 2), date, true);
+    // 入厩したばかりの2歳馬は、まだ鍛えられていない（鍛え具合が低く、仕上がりも緩い）
+    foal.life = { ...foal.life, dev: Object.fromEntries(GROWTH_KEYS.map((k) => [k, 0.35])) as Life['pot'], fitness: 30 };
+    out.push({ ...foal, ...currentAbilities(foal, foal.life, bioAge(foal.birthYear, date)) });
   }
   // 引退馬の記録は直近 RETIRED_KEEP 頭まで、成績は直近5走だけ残す（保存容量のため）
   for (let i = 0; i < out.length; i++) if (out[i].status === 'retired' && out[i].history.length > 5) out[i] = { ...out[i], history: out[i].history.slice(0, 5) };
