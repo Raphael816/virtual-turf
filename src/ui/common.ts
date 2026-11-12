@@ -96,3 +96,13 @@ export function formBadges(runs: RunRecord[]): string {
     })
     .join('')}</span>`;
 }
+
+/** 前走からの間隔の表記（中N週・休み明け・初出走） */
+export function intervalText(runs: RunRecord[]): string {
+  const prev = runs[0];
+  if (!prev) return '初出走';
+  const d = store.state.world.date;
+  const weeks = (d.year - prev.y) * 52 + (d.week - prev.w);
+  if (weeks >= 10) return `休み明け（${weeks}週）`;
+  return weeks <= 1 ? '連闘' : `中${weeks - 1}週`;
+}

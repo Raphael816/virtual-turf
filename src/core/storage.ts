@@ -3,7 +3,7 @@
  * メモリ上だけで動作する。
  */
 import { type AppState, SCHEMA_VERSION } from './state';
-import { createWorld } from './world';
+import { type World, createWorld, upgradeWorld } from './world';
 
 export interface KV {
   getItem(key: string): string | null;
@@ -75,5 +75,7 @@ export function migrate(raw: unknown): AppState | null {
     v = 2;
   }
   s.version = v;
+  // 競馬界の形式の移行（schema 1 → 2：生涯の状態を追加）
+  if (s.world && typeof s.world === 'object') s.world = upgradeWorld(s.world as World);
   return s as unknown as AppState;
 }

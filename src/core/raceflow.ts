@@ -8,7 +8,7 @@ import { appendAudit } from './audit';
 import { BET_TYPE_BY_ID, type BetTypeId } from './bettypes';
 import { type RaceCard, createMeeting, runRace } from './meeting';
 import { type Pools, buildOddsBook, marketPools, poolTotal, settleOdds, standardOdds, withStakes } from './pool';
-import { GOING_LABEL, type SimResult, courseShort } from './sim';
+import { GOING_INDEX, GOING_LABEL, type SimResult, courseShort } from './sim';
 import { type RaceResultForWorld, type World, advanceWeek, recordRace } from './world';
 import type { Probabilities } from './probability';
 import { type AppState, settleRace } from './state';
@@ -158,7 +158,10 @@ export function resultForWorld(card: RaceCard, res: SimResult, pools?: Pools): R
     course: courseShort(card.conditions),
     going: GOING_LABEL[card.conditions.going],
     fieldSize: card.entries.length,
+    distance: card.conditions.distance,
+    goingIndex: GOING_INDEX[card.conditions.going],
     runners: card.entries.map((e, i) => ({
+      kakari: res.factors[i].kakari,
       horseId: e.horseId,
       number: e.number,
       rank: res.order.indexOf(i) + 1,
