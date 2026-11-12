@@ -1,7 +1,8 @@
 import { raceStatus } from '../../core/raceflow';
 import { HORSE_BY_ID, STYLE_LABEL } from '../../data/roster';
 import { type DistanceAptitude, GROWTH_LABEL, distanceFit, gradeOf, profileOf } from '../../core/ability';
-import { ageOf, findHorse } from '../../core/world';
+import { type WorldHorse, ageOf, findHorse, formOf } from '../../core/world';
+import { GROWTH_KEYS, INJURY_LABEL, bioAge, conditionLabel, maturity } from '../../core/lifecycle';
 import { formatTime } from '../../core/sim';
 import { type Page, conditionText, raceTitle, surfaceChip } from '../common';
 import { store } from '../store';
@@ -17,7 +18,7 @@ const STATS: { key: StatKey; label: string; help: string }[] = [
   { key: 'temper', label: '気性', help: '高いほど落ち着いていて掛かりにくく、ゲートでも出遅れにくい' },
   { key: 'control', label: '操縦性', help: '騎手の指示への反応。位置取りが正確で、掛かっても早く折り合う' },
   { key: 'start', label: 'ゲート', help: 'スタートの反応と二の脚' },
-  { key: 'health', label: '健康', help: '体調の安定（当日の出来のぶれが小さい）。故障しにくさにも関わる（今後の段階で反映）' },
+  { key: 'health', label: '健康', help: '体調の安定（当日の出来のぶれが小さい）・故障のしにくさ・疲労の回復の早さ' },
 ];
 
 /** 距離適性のグラフ（1000〜3600m で能力を発揮できる割合） */
@@ -35,6 +36,54 @@ function distanceChart(apt: DistanceAptitude): string {
     <line x1="10" x2="${W - 10}" y1="${H - 18}" y2="${H - 18}" stroke="var(--border)"/>${ticks}
     <polyline points="${pts.join(' ')}" fill="none" stroke="var(--turf)" stroke-width="2.5"/>
     <line x1="${x(apt.center)}" x2="${x(apt.center)}" y1="${y(1)}" y2="${H - 18}" stroke="var(--turf)" stroke-dasharray="3 3"/></svg>`;
+}
+
+/** 成長曲線（スピードの、ピーク時に対する割合。2〜9歳）と現在の位置 */
+function growthChart(h: WorldHorse, now: number): string {
+  const W = 300;
+  const H = 100;
+  const x = (a: number) => ((a - 1.7) / 7.6) * (W - 20) + 10;
+  const y = (f: number) => H - 18 - ((f - 0.6) / 0.42) * (H - 30);
+  const curve = (k: (typeof GROWTH_KEYS)[number], color: string) => {
+    const pts: string[] = [];
+    for (let a = 1.7; a <= 9.3; a += 0.1) pts.push(`${x(a).toFixed(1)},${y(maturity(h.growthType ?? 'normal', h.growth ?? 60, a, k, h.life.peakShift)).toFixed(1)}`);
+    return `<polyline points="${pts.join(' ')}" fill="none" stroke="${color}" stroke-width="2"/>`;
+  };
+  const ticks = [2, 3, 4, 5, 6, 7, 8, 9].map((a) => `<text x="${x(a - 0.3)}" y="${H - 3}" text-anchor="middle" font-size="10" fill="var(--muted)">${a}歳</text>`).join('');
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" style="max-width:360px" role="img" aria-label="成長曲線">
+    <line x1="10" x2="${W - 10}" y1="${H - 18}" y2="${H - 18}" stroke="var(--border)"/>${ticks}
+    ${curve('stamina', '#7aa7d6')}${curve('speed', 'var(--turf)')}
+    <line x1="${x(now)}" x2="${x(now)}" y1="8" y2="${H - 18}" stroke="#ffd166" stroke-dasharray="3 3"/>
+    <text x="${x(now) + 4}" y="16" font-size="10" fill="#ffd166">現在</text></svg>
+    <p class="muted" style="font-size:.78rem;margin:0">緑：スピード　青：スタミナ（ピーク時を上端とした割合の目安）</p>`;
+}
+
+const bar = (v: number, warn: number) =>
+  `<span style="display:inline-block;width:120px;height:8px;background:var(--border);border-radius:4px;vertical-align:middle"><span style="display:block;width:${Math.min(100, v)}%;height:100%;border-radius:4px;background:${v >= warn ? '#e07a5f' : 'var(--turf)'}"></span></span> <span class="tnum">${Math.round(v)}</span>`;
+
+function lifeSection(h: WorldHorse, date: { year: number; week: number }): string {
+  const age = bioAge(h.birthYear, date);
+  const m = maturity(h.growthType ?? 'normal', h.growth ?? 60, age, 'speed', h.life.peakShift);
+  const next = maturity(h.growthType ?? 'normal', h.growth ?? 60, age + 0.5, 'speed', h.life.peakShift);
+  const stage = m >= 0.995 ? (next < m - 0.005 ? 'ピーク（そろそろ下り坂）' : 'ピーク') : next > m ? '成長中' : '下り坂';
+  const f = formOf(h, date);
+  const inj = h.life.injury;
+  return `<section class="card" style="margin-top:12px" aria-labelledby="life-h"><h2 id="life-h">状態と成長</h2>
+    ${h.status === 'retired' ? `<p class="notice">${h.retiredAt?.year}年に引退（${esc(h.retireReason ?? '')}）</p>` : ''}
+    <div class="grid grid-2">
+      <div>
+        <table class="table"><tbody>
+          <tr><th>調子</th><td><b>${conditionLabel(f.condition)}</b></td></tr>
+          <tr><th>身体的疲労</th><td>${bar(f.fatigue, 30)}</td></tr>
+          <tr><th>精神的疲労</th><td>${bar(f.mental, 40)}</td></tr>
+          <tr><th>故障</th><td>${inj ? `<b class="neg">${esc(inj.name)}（${INJURY_LABEL[inj.severity]}）</b> 復帰まで約${inj.weeksLeft}週` : 'なし'}</td></tr>
+          <tr><th>成長の段階</th><td><b>${stage}</b>（成長型：${{ early: '早熟', normal: '普通', late: '晩成' }[h.growthType ?? 'normal']}）</td></tr>
+        </tbody></table>
+        <p class="muted" style="font-size:.8rem">疲労はレースで増え、休養で抜けます（1600mで約5週）。疲労が残っている馬は出走を見送ります。調子には周期的な波があり、疲労・休み明けでも下がります。</p>
+      </div>
+      <div>${growthChart(h, age)}</div>
+    </div>
+  </section>`;
 }
 
 const aptRow = (label: string, v: number, help: string) =>
@@ -92,7 +141,7 @@ export function horsePage(horseId: string): Page {
             ${radar(STATS.map((s) => p[s.key]), STATS.map((s) => s.label))}
             <dl style="display:grid;grid-template-columns:auto 1fr auto;gap:4px 12px;font-size:.88rem;margin:8px 0 0">
               ${STATS.map((s) => `<dt>${s.label}</dt><dd class="muted" style="margin:0">${s.help}</dd><dd style="margin:0;text-align:right" class="tnum"><b>${p[s.key]}</b></dd>`).join('')}
-              <dt>成長型</dt><dd class="muted" style="margin:0">成長の時期（成長の計算は今後の段階で反映）</dd><dd style="margin:0;text-align:right"><b>${GROWTH_LABEL[p.growthType]}</b></dd>
+              <dt>成長型</dt><dd class="muted" style="margin:0">能力がピークを迎える時期（早熟：3歳前後、普通：4〜5歳、晩成：5〜6歳）</dd><dd style="margin:0;text-align:right"><b>${GROWTH_LABEL[p.growthType]}</b></dd>
             </dl>
           </section>
           <section class="card" aria-labelledby="apt-h"><h2 id="apt-h">適性・脚質</h2>
@@ -115,6 +164,7 @@ export function horsePage(horseId: string): Page {
             <p class="muted" style="font-size:.82rem">脚質の目安 — 逃げ：先頭でレースを進める／先行：前の方につける／差し：中団から伸びる／追込：後方から一気に追い込む。</p>
           </section>
         </div>
+        ${wh ? lifeSection(wh, store.state.world.date) : ''}
         <section class="card" style="margin-top:12px" aria-labelledby="hist-h"><h2 id="hist-h">競走成績（直近10走）</h2>
           ${
             wh && wh.history.length
