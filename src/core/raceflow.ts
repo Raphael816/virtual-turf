@@ -160,7 +160,9 @@ export function resultForWorld(card: RaceCard, res: SimResult, pools?: Pools): R
     fieldSize: card.entries.length,
     distance: card.conditions.distance,
     goingIndex: GOING_INDEX[card.conditions.going],
+    ...(card.terms ? { terms: card.terms } : {}),
     runners: card.entries.map((e, i) => ({
+      ...(e.weight !== undefined ? { weight: e.weight } : {}),
       kakari: res.factors[i].kakari,
       horseId: e.horseId,
       number: e.number,

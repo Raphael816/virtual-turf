@@ -110,7 +110,8 @@ describe('simulateRace: 能力と条件が結果に影響する', () => {
   it('能力が大きく上の馬はよく勝つが、必ず勝つわけではない', () => {
     const hs = Array.from({ length: 10 }, (_, i) => horse(`n${i}`));
     hs[4] = horse('star', { speed: 92, stamina: 85, accel: 90 });
-    const rate = winRate(MILE, field(hs), 4);
+    // 能力差がかなり大きい（スピード+17）ため勝率は 99% 前後。負けることもあるのを確かめるため試行を多めにする
+    const rate = winRate(MILE, field(hs), 4, 1000);
     expect(rate).toBeGreaterThan(0.45);
     expect(rate).toBeLessThan(1);
   });

@@ -20,9 +20,12 @@ import { CAMERA_LABEL, type CameraMode, type RaceViewer } from '../../render/typ
 import {
   type Page,
   conditionText,
+  kgText,
+  prizeText,
   formBadges,
   horseOf,
   intervalText,
+  isFirstRun,
   lastWorkText,
   recentRuns,
   raceTitle,
@@ -121,7 +124,7 @@ export function racePage(raceId: string): Page {
     return `
       <div class="table-wrap"><table class="table">
         <caption class="sr-only">${raceTitle(card)} 出馬表</caption>
-        <thead><tr><th>馬番</th><th>馬名・騎手</th><th>近走</th><th class="hide-sm">脚質</th><th class="hide-sm">適性</th><th class="r">単勝</th><th class="r">人気</th>${fin ? '<th class="r">着順</th>' : ''}</tr></thead>
+        <thead><tr><th>馬番</th><th>馬名・騎手</th><th class="r" title="負担重量 (kg)">斤量</th><th>近走</th><th class="hide-sm">脚質</th><th class="hide-sm">適性</th><th class="r">単勝</th><th class="r">人気</th>${fin ? '<th class="r">着順</th>' : ''}</tr></thead>
         <tbody>${card.entries
           .map((e) => {
             const h = horseOf(e);
@@ -129,8 +132,9 @@ export function racePage(raceId: string): Page {
             const surf = gradeOf(card.conditions.surface === 'turf' ? profileOf(h).apt.turf : profileOf(h).apt.dirt);
             return `<tr class="${selection.includes(e.number) ? 'is-selected' : ''}">
               <td>${numBadge(e.number, e.frame, 'lg')}</td>
-              <td class="entry-name"><a href="#/horse/${h.id}">${esc(h.name)}</a><div class="entry-sub">${h.sex}${h.age}・${esc(e.jockey)}・${intervalText(recentRuns(e, card.id))}${lastWorkText(e.horseId) ? `・調教 ${lastWorkText(e.horseId)}` : ''}</div></td>
-              <td>${formBadges(recentRuns(e, card.id))}</td>
+              <td class="entry-name"><a href="#/horse/${h.id}">${esc(h.name)}</a><div class="entry-sub">${h.sex}${h.age}・${esc(e.jockey)}・${intervalText(recentRuns(e, card.id), isFirstRun(e, card.id))}${lastWorkText(e.horseId) ? `・調教 ${lastWorkText(e.horseId)}` : ''}</div></td>
+              <td class="r tnum">${kgText(e.weight)}</td>
+              <td>${formBadges(recentRuns(e, card.id), isFirstRun(e, card.id))}</td>
               <td class="hide-sm">${STYLE_LABEL[h.style]}</td>
               <td class="hide-sm"><span class="entry-sub">${card.conditions.surface === 'turf' ? '芝' : 'ダ'}</span> <span class="grade grade-${surf}">${surf}</span> <span class="entry-sub" title="距離適性（このレースの距離 ${card.conditions.distance}m に対して）">距離${distanceMark(profileOf(h).apt.distance, card.conditions.distance)}</span></td>
               <td class="r tnum" data-odds="win:${key}">${oddsText(b, 'win', key)}</td>
@@ -565,7 +569,8 @@ export function racePage(raceId: string): Page {
     el.innerHTML = `
       <nav aria-label="パンくず" class="muted" style="font-size:.85rem;margin-bottom:4px"><a href="#/races">レース一覧</a> › ${card.no}R</nav>
       <div class="race-head"><h1>${raceTitle(card)}</h1><span data-head-status></span></div>
-      <p class="race-meta" style="margin-bottom:12px">${surfaceChip(card)} ${conditionText(card)}</p>
+      <p class="race-meta" style="margin-bottom:${card.terms ? 2 : 12}px">${surfaceChip(card)} ${conditionText(card)}</p>
+      ${card.terms ? `<p class="race-meta" style="margin-bottom:12px">本賞金（万円）${prizeText(card)}</p>` : ''}
       <div class="race-layout">
         <div>
           ${stageHtml()}

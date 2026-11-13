@@ -5,7 +5,8 @@ import { type WorldHorse, ageOf, findHorse, formOf } from '../../core/world';
 import { DEV_DEFAULT, GROWTH_KEYS, INJURY_LABEL, bioAge, conditionLabel, maturity } from '../../core/lifecycle';
 import { EVAL_LABEL, MENU_BY_ID, type MenuId } from '../../core/training';
 import { formatTime } from '../../core/sim';
-import { type Page, conditionText, raceTitle, surfaceChip } from '../common';
+import { type Page, conditionText, kgText, raceTitle, surfaceChip } from '../common';
+import { CLASS_SHORT, HORSE_CLASS_LABEL, classOfEarnings } from '../../core/raceclass';
 import { store } from '../store';
 import { esc, numBadge } from '../util';
 
@@ -158,7 +159,8 @@ export function horsePage(horseId: string): Page {
         <p class="muted">${h.sex}${wh ? ageOf(wh, store.state.world.date) : h.age}・${h.coat}・${esc(h.trainer)}（架空）</p>
         ${
           wh
-            ? `<p>通算 <b>${wh.career.starts}戦${wh.career.wins}勝</b>［${wh.career.wins}-${wh.career.seconds}-${wh.career.thirds}-${wh.career.starts - wh.career.wins - wh.career.seconds - wh.career.thirds}］${wh.status === 'retired' ? '・引退' : ''}</p>`
+            ? `<p>通算 <b>${wh.career.starts}戦${wh.career.wins}勝</b>［${wh.career.wins}-${wh.career.seconds}-${wh.career.thirds}-${wh.career.starts - wh.career.wins - wh.career.seconds - wh.career.thirds}］${wh.status === 'retired' ? '・引退' : ''}<br>
+                <span title="所属クラスは収得賞金で決まります（1勝クラス 500万円以下、2勝クラス 1,000万円以下、3勝クラス 1,600万円以下、それを超えるとオープン）">所属 <b>${HORSE_CLASS_LABEL[classOfEarnings(wh.earnings)]}</b>・収得賞金 ${wh.earnings.toLocaleString()}万円</span>・獲得本賞金 ${(wh.career.prize ?? 0).toLocaleString()}万円${wh.career.prize === 0 && wh.career.starts > 0 ? '<span class="muted">（記録はこの段階から）</span>' : ''}</p>`
             : ''
         }
         <div class="grid grid-2">
@@ -195,11 +197,11 @@ export function horsePage(horseId: string): Page {
             wh && wh.history.length
               ? `<div class="table-wrap"><table class="table nowrap">
                   <caption class="sr-only">競走成績</caption>
-                  <thead><tr><th>日付</th><th>レース</th><th>コース</th><th>馬場</th><th class="r">頭数</th><th class="r">馬番</th><th class="r">着順</th><th class="r">タイム</th><th>着差</th><th class="r">上がり</th><th>通過</th><th>騎手</th><th class="r">人気</th></tr></thead>
+                  <thead><tr><th>日付</th><th>レース</th><th>クラス</th><th>コース</th><th>馬場</th><th class="r">頭数</th><th class="r">馬番</th><th class="r">着順</th><th class="r">斤量</th><th class="r">タイム</th><th>着差</th><th class="r">上がり</th><th>通過</th><th>騎手</th><th class="r">人気</th></tr></thead>
                   <tbody>${wh.history
                     .map(
-                      (r) => `<tr><td class="tnum">${r.y}年${r.w}週</td><td><a href="#/race/${encodeURIComponent(r.r)}">${esc(r.n)}</a></td><td>${esc(r.c)}</td><td>${esc(r.g)}</td>
-                        <td class="r tnum">${r.f}</td><td class="r tnum">${r.no}</td><td class="r"><b>${r.rk}</b></td><td class="r tnum">${formatTime(r.t)}</td><td>${esc(r.m || '—')}</td>
+                      (r) => `<tr><td class="tnum">${r.y}年${r.w}週</td><td><a href="#/race/${encodeURIComponent(r.r)}">${esc(r.n)}</a></td><td>${r.k ? CLASS_SHORT[r.k] : '—'}</td><td>${esc(r.c)}</td><td>${esc(r.g)}</td>
+                        <td class="r tnum">${r.f}</td><td class="r tnum">${r.no}</td><td class="r"><b>${r.rk}</b></td><td class="r tnum">${kgText(r.kg)}</td><td class="r tnum">${formatTime(r.t)}</td><td>${esc(r.m || '—')}</td>
                         <td class="r tnum">${r.l3.toFixed(1)}</td><td class="tnum">${esc(r.p)}</td><td>${esc(r.j)}</td><td class="r tnum">${r.pop ?? '—'}</td></tr>`,
                     )
                     .join('')}</tbody></table></div>

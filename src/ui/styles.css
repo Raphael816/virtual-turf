@@ -115,6 +115,11 @@ main { max-width: 1200px; margin: 0 auto; padding: 16px var(--gutter) 32px; }
 .chip-finished { color: var(--muted); }
 .chip-turf { color: #a8eabf; }
 .chip-dirt { color: #e8c9a2; }
+.chip-grade { font-weight: 700; font-size: .78em; vertical-align: middle; }
+.chip-g1 { color: #fff; background: #1f5fbf; border-color: #1f5fbf; }
+.chip-g2 { color: #fff; background: #b23a48; border-color: #b23a48; }
+.chip-g3 { color: #fff; background: #2f8a4e; border-color: #2f8a4e; }
+.chip-listed { color: #f2d27a; border-color: #8a7330; }
 
 .num { display: inline-grid; place-items: center; min-width: 1.75em; height: 1.75em; padding: 0 .3em; border-radius: 4px; font-weight: 800; font-size: .85rem; background: var(--nb); color: var(--nf); border: 1px solid rgba(255,255,255,.25); font-variant-numeric: tabular-nums; }
 .num.lg { font-size: 1rem; }
