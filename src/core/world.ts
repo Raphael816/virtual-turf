@@ -13,6 +13,8 @@ import { COATS, type Grade, type Horse, HORSES, type RunningStyle, TRAINERS } fr
 import { generateExtended } from './ability';
 import { GROWTH_KEYS, type Life, type RaceForm, afterRace, bioAge, conditionOf, currentAbilities, initLife, retireProbability, weeklyRecovery } from './lifecycle';
 import { npcPlan, train } from './training';
+import { type ClassId, type RaceTerms, earningsAdd, prizeFor } from './raceclass';
+import { MAIDEN3_LAST_WEEK } from './program';
 import { Rng } from './rng';
 
 export const WEEKS_PER_YEAR = 52;
@@ -81,6 +83,11 @@ export interface RunRecord {
   /** 確定単勝オッズ・人気 */
   o?: number;
   pop?: number;
+  /** クラス・負担重量 (kg)・1着とのタイム差（秒）・獲得した本賞金（万円）。第5段階から */
+  k?: ClassId;
+  kg?: number;
+  tb?: number;
+  pz?: number;
 }
 
 export interface Career {
@@ -88,6 +95,8 @@ export interface Career {
   wins: number;
   seconds: number;
   thirds: number;
+  /** 獲得した本賞金の合計（万円）。第5段階から */
+  prize?: number;
 }
 
 export interface WorldHorse extends Horse {
@@ -103,11 +112,13 @@ export interface WorldHorse extends Horse {
   life: Life;
   retiredAt?: GameDate;
   retireReason?: string;
+  /** 収得賞金（万円）。所属クラスを決める（raceclass.ts）。第5段階から */
+  earnings: number;
 }
 
 export interface World {
-  /** 2：生涯の状態（life）を追加 */
-  schema: 2;
+  /** 2：生涯の状態（life）を追加、3：収得賞金・クラス（第5段階） */
+  schema: 3;
   date: GameDate;
   /** これまでに開いた開催日の数 */
   meetings: number;
@@ -189,7 +200,7 @@ function toWorldHorse(h: Horse, date: GameDate, asPotential: boolean): WorldHors
     life.pot = { speed: h.speed, stamina: h.stamina, accel: h.accel, sustain: h.sustain ?? Math.round((h.stamina + h.accel) / 2), power: h.power };
   } else life = initLife(h, age, h.id);
   const cur = currentAbilities(h, life, age);
-  return { ...h, ...cur, birthYear, owner: 'npc', status: 'active', career: { starts: 0, wins: 0, seconds: 0, thirds: 0 }, history: [], life };
+  return { ...h, ...cur, birthYear, owner: 'npc', status: 'active', career: { starts: 0, wins: 0, seconds: 0, thirds: 0, prize: 0 }, history: [], life, earnings: 0 };
 }
 
 /**
@@ -206,16 +217,84 @@ export function createWorld(extra = 664): World {
     if (!name) break;
     horses.push(toWorldHorse(generateHorse(rng, `g${String(horses.length).padStart(4, '0')}`, name), date, true));
   }
-  return { schema: 2, date, meetings: 0, horses };
+  return { schema: 3, date, meetings: 0, horses: assignInitialClasses(horses, date) };
+}
+
+/** 能力の総合点（初期のクラス分けの順位づけに使う） */
+function overall(h: Pick<Horse, 'speed' | 'accel' | 'stamina' | 'power' | 'sustain'>): number {
+  return h.speed * 0.35 + h.accel * 0.25 + h.stamina * 0.2 + (h.sustain ?? h.stamina) * 0.1 + h.power * 0.1;
+}
+
+/**
+ * 初期の所属クラス（推定）。ゲーム開始時点で、各世代が JRA のように各クラスに分かれている状態を作る。
+ * 世代の中で能力の高い順に、次の割合で上のクラスに置く（現実の分布の目安。docs/10-race-system.md）：
+ * - 3歳（1月）：オープン 2%、2勝クラス 5%、1勝クラス 25%、残りは未勝利（半数はまだ走っていない）
+ * - 4歳以上：オープン 22%、3勝クラス 15%、2勝クラス 28%、1勝クラス 30%、未勝利 5%
+ * 戦績（勝ち数・出走数）はクラスに見合う値にそろえる。
+ */
+export function assignInitialClasses(horses: WorldHorse[], date: GameDate): WorldHorse[] {
+  const rng = new Rng(`classes:${date.year}:${date.week}`);
+  const byAge = new Map<number, WorldHorse[]>();
+  for (const h of horses) {
+    if (h.status !== 'active') continue;
+    const a = Math.min(4, ageOf(h, date));
+    byAge.set(a, [...(byAge.get(a) ?? []), h]);
+  }
+  const out = new Map<string, WorldHorse>();
+  for (const [age, list] of byAge) {
+    if (age <= 2) continue;
+    const ranked = list.map((h) => ({ h, s: overall(h) + rng.normal(0, 2) })).sort((a, b) => b.s - a.s);
+    const shares: [number, number][] = age === 3 ? [[0.02, 4], [0.05, 2], [0.25, 1]] : [[0.22, 4], [0.15, 3], [0.28, 2], [0.3, 1]];
+    let i = 0;
+    for (const [share, wins] of shares) {
+      const n = Math.round(share * ranked.length);
+      for (let k = 0; k < n && i < ranked.length; k++, i++) {
+        const h = ranked[i].h;
+        const q = n > 1 ? k / (n - 1) : 0;
+        // オープン馬は上位ほど収得賞金が多い（2,100万〜8,100万円）
+        const earnings = wins === 4 ? Math.round(2100 + 6000 * (1 - q) ** 2) : [0, 400, 900, 1500][wins];
+        const w = wins === 4 ? 4 + Math.floor((earnings - 2100) / 1500) : wins;
+        const starts = w + rng.int(1, 3) * (ageOf(h, date) - 1);
+        out.set(h.id, { ...h, earnings, career: { starts, wins: w, seconds: Math.floor(starts * 0.15), thirds: Math.floor(starts * 0.12), prize: 0 } });
+      }
+    }
+    // 残り（未勝利）：3歳は半数が出走経験あり、4歳以上はすべて出走経験あり
+    for (; i < ranked.length; i++) {
+      const h = ranked[i].h;
+      const starts = age === 3 ? (rng.chance(0.5) ? rng.int(1, 4) : 0) : rng.int(4, 10);
+      out.set(h.id, { ...h, earnings: 0, career: { starts, wins: 0, seconds: Math.floor(starts * 0.12), thirds: Math.floor(starts * 0.12), prize: 0 } });
+    }
+  }
+  return horses.map((h) => out.get(h.id) ?? h);
+}
+
+/** 戦績の勝ち数から収得賞金を見積もる（古い保存データの移行用。1勝目 400万、2勝目 +500万、3勝目 +600万、4勝目 +900万、以降 +1,200万） */
+export function earningsFromWins(wins: number): number {
+  const steps = [400, 500, 600, 900];
+  let e = 0;
+  for (let i = 0; i < wins; i++) e += steps[i] ?? 1200;
+  return e;
 }
 
 /** 生涯の状態がない古い競馬界（schema 1）を移行する（今の能力を現在の値とし、上限を逆算） */
 export function upgradeWorld(w: World | (Omit<World, 'schema'> & { schema: number })): World {
-  if (w.schema === 2) return w as World;
-  const horses = (w.horses as (Omit<WorldHorse, 'life'> & { life?: Life })[]).map((h) =>
-    h.life ? (h as WorldHorse) : { ...h, life: initLife(h, bioAge(h.birthYear, w.date), h.id) },
-  );
-  return { ...(w as World), schema: 2, horses };
+  if (w.schema === 3) return w as World;
+  let horses = (w.horses as (Omit<WorldHorse, 'life' | 'earnings'> & { life?: Life; earnings?: number })[]).map((h) => ({
+    ...h,
+    life: h.life ?? initLife(h, bioAge(h.birthYear, w.date), h.id),
+    earnings: h.earnings ?? 0,
+  })) as WorldHorse[];
+  // 収得賞金（schema 3）：能力順の初期クラスと、これまでの勝ち数から見積もった額の大きいほう（勝ち数は3勝まで数える）。
+  // 戦績（出走数・勝ち数）はこれまでの記録を残す
+  if (w.schema < 3) {
+    const init = new Map(assignInitialClasses(horses, w.date).map((h) => [h.id, h.earnings]));
+    horses = horses.map((h) => ({
+      ...h,
+      earnings: Math.max(init.get(h.id) ?? 0, earningsFromWins(Math.min(3, h.career.wins))),
+      career: { ...h.career, prize: h.career.prize ?? 0 },
+    }));
+  }
+  return { ...(w as World), schema: 3, horses };
 }
 
 // ---------------------------------------------------------------- 進行
@@ -241,7 +320,7 @@ export function formOf(h: WorldHorse, date: GameDate): RaceForm {
 
 /** 出走時点の能力・状態の写し（レース計算に使う形）。年齢は現在の暦で数える */
 export function snapshot(h: WorldHorse, date: GameDate): Horse {
-  const { birthYear: _b, owner: _o, status: _s, career: _c, history: _h, lastRun: _l, life: _life, retiredAt: _r, retireReason: _rr, ...horse } = h;
+  const { birthYear: _b, owner: _o, status: _s, career: _c, history: _h, lastRun: _l, life: _life, retiredAt: _r, retireReason: _rr, earnings: _e, ...horse } = h;
   return { ...horse, age: ageOf(h, date), form: formOf(h, date) };
 }
 
@@ -262,7 +341,20 @@ export function advanceWeek(world: World): World {
     return { ...h, ...cur, life };
   });
   if (date.week === 1) horses = yearStart(horses, date);
+  if (date.week === MAIDEN3_LAST_WEEK + 1) horses = maidenCutoff(horses, date);
   return { ...world, date, meetings: world.meetings + 1, horses };
+}
+
+/**
+ * 3歳未勝利戦の終わり（9月中旬）：まだ勝っていない3歳以上の馬は、多くが地方競馬への転出や引退を選ぶ（推定 70%）。
+ * 残った馬は格上挑戦で1勝クラスに出る
+ */
+function maidenCutoff(horses: WorldHorse[], date: GameDate): WorldHorse[] {
+  return horses.map((h) => {
+    if (h.status !== 'active' || h.earnings > 0 || ageOf(h, date) < 3) return h;
+    if (!new Rng(`cutoff:${date.year}:${h.id}`).chance(0.7)) return h;
+    return { ...h, status: 'retired' as const, retiredAt: { ...date }, retireReason: '未勝利（地方競馬へ転出）' };
+  });
 }
 
 /** 年明け：引退の判断と、2歳の新しい世代 */
@@ -271,7 +363,7 @@ function yearStart(horses: WorldHorse[], date: GameDate): WorldHorse[] {
     if (h.status !== 'active') return h;
     const age = ageOf(h, date);
     const recentWins = h.history.filter((r) => r.rk === 1).length;
-    const p = retireProbability(h, age, h.life, recentWins, h.history.length);
+    const p = retireProbability(h, age, h.life, recentWins, h.history.length, h.earnings <= 1600);
     if (new Rng(`retire:${date.year}:${h.id}`).chance(p)) {
       const reason = age >= 8 ? '高齢' : h.life.injury?.severity === 'severe' ? '故障' : h.sex === '牝' && age >= 5 ? '繁殖入り' : '成績不振';
       return { ...h, status: 'retired' as const, retiredAt: { ...date }, retireReason: reason };
@@ -315,13 +407,16 @@ export interface RaceResultForWorld {
   fieldSize: number;
   distance: number;
   goingIndex: number;
+  /** 条件（クラス・賞金）。ない場合（古い出走表）は収得賞金・本賞金を加えない */
+  terms?: RaceTerms;
   /** 出走馬ごと（馬番順でなくてよい） */
-  runners: { horseId: string; number: number; rank: number; time: number; margin: string; last3F: number; passing: string; jockey: string; kakari?: boolean; odds?: number; popularity?: number }[];
+  runners: { horseId: string; number: number; rank: number; time: number; margin: string; last3F: number; passing: string; jockey: string; kakari?: boolean; odds?: number; popularity?: number; weight?: number }[];
 }
 
 /** レース結果を各馬の戦績に記録する */
 export function recordRace(world: World, res: RaceResultForWorld): World {
   const byId = new Map(res.runners.map((r) => [r.horseId, r]));
+  const winTime = Math.min(...res.runners.map((r) => r.time));
   const horses = world.horses.map((h) => {
     const r = byId.get(h.id);
     if (!r) return h;
@@ -344,7 +439,12 @@ export function recordRace(world: World, res: RaceResultForWorld): World {
       j: r.jockey,
       ...(r.odds !== undefined ? { o: r.odds } : {}),
       ...(r.popularity !== undefined ? { pop: r.popularity } : {}),
+      ...(res.terms ? { k: res.terms.cls } : {}),
+      ...(r.weight !== undefined ? { kg: r.weight } : {}),
+      tb: Math.round((r.time - winTime) * 10) / 10,
     };
+    const prize = res.terms ? prizeFor(res.terms.prize, r.rank) : 0;
+    if (prize > 0) rec.pz = prize;
     // レース後の疲労・故障（重度の故障は半数がそのまま引退）
     const age = ageOf(h, world.date);
     const life = afterRace(h.life, h.health ?? 65, age, { distance: res.distance, goingIndex: res.goingIndex, kakari: !!r.kakari, rank: r.rank, field: res.fieldSize }, `${res.raceId}:${h.id}`);
@@ -359,7 +459,9 @@ export function recordRace(world: World, res: RaceResultForWorld): World {
         wins: h.career.wins + (r.rank === 1 ? 1 : 0),
         seconds: h.career.seconds + (r.rank === 2 ? 1 : 0),
         thirds: h.career.thirds + (r.rank === 3 ? 1 : 0),
+        prize: (h.career.prize ?? 0) + prize,
       },
+      earnings: h.earnings + (res.terms ? earningsAdd(res.terms, r.rank) : 0),
       history: [rec, ...h.history].slice(0, HISTORY_LIMIT),
     };
   });

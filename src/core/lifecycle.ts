@@ -221,13 +221,15 @@ export interface RaceForm {
 }
 
 /** 引退の確率（年明けに判断。推定） */
-export function retireProbability(h: Pick<Horse, 'sex'>, age: number, life: Life, recentWins: number, starts: number): number {
+export function retireProbability(h: Pick<Horse, 'sex'>, age: number, life: Life, recentWins: number, starts: number, conditionClass = false): number {
   if (age >= 10) return 1;
   let p = age >= 9 ? 0.75 : age >= 8 ? 0.45 : age >= 7 ? 0.25 : age >= 6 ? 0.12 : age >= 5 ? 0.05 : 0.02;
   // 牝馬は5〜6歳で繁殖入りすることが多い
   if (h.sex === '牝' && age >= 5) p += 0.15;
   // 長く勝てていない
   if (starts >= 8 && recentWins === 0) p += 0.1;
+  // 5歳以上で条件クラス（オープン未満）にとどまり、勝てていない馬は引退・地方への転出が多い（第5段階。推定）
+  if (conditionClass && age >= 5 && recentWins === 0) p += 0.15;
   if (life.injury?.severity === 'severe') p += 0.4;
   return clamp(p, 0, 1);
 }

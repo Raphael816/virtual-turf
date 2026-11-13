@@ -34,13 +34,17 @@ describe('成長曲線', () => {
   });
   it('競馬界で年を重ねると、晩成馬の能力は古馬になって伸び、高齢の馬は衰える', async () => {
     let w = createWorld();
-    const late = w.horses.find((h) => h.growthType === 'late' && ageOf(h, w.date) === 3)!;
+    // 晩成の3歳馬（途中で引退する馬もいるため、2年後も現役の馬の平均で比べる）
+    const lates = w.horses.filter((h) => h.growthType === 'late' && ageOf(h, w.date) === 3);
     const old = w.horses.find((h) => ageOf(h, w.date) === 7 && h.growthType !== 'late')!;
-    const s0 = { late: late.speed, old: old.speed };
+    const s0 = { late: new Map(lates.map((h) => [h.id, h.speed])), old: old.speed };
     for (let i = 0; i < 104; i++) w = advanceWeek(w);
-    const late2 = w.horses.find((h) => h.id === late.id)!;
+    const alive = w.horses.filter((h) => s0.late.has(h.id) && h.status === 'active');
+    // このテストはレースをしない（だれも勝たない）ため、多くは未勝利のまま引退する
+    expect(alive.length).toBeGreaterThan(0);
+    const gain = alive.reduce((a, h) => a + h.speed - s0.late.get(h.id)!, 0) / alive.length;
+    expect(gain).toBeGreaterThan(0);
     const old2 = w.horses.find((h) => h.id === old.id);
-    expect(late2.speed).toBeGreaterThan(s0.late);
     if (old2 && old2.status === 'active') expect(old2.speed).toBeLessThan(s0.old);
   });
 });
@@ -142,10 +146,10 @@ describe('保存データの移行', () => {
     const s = await createInitialState(0);
     const old = { ...s.world, schema: 1, horses: s.world.horses.map(({ life: _l, ...h }) => h) };
     const w = upgradeWorld(old as unknown as World);
-    expect(w.schema).toBe(2);
+    expect(w.schema).toBe(3);
     expect(w.horses.every((h) => h.life && h.life.pot.speed > 0)).toBe(true);
     const m = migrate(JSON.parse(JSON.stringify({ ...s, world: old })))!;
-    expect(m.world.schema).toBe(2);
+    expect(m.world.schema).toBe(3);
   });
   it('年齢の計算：JRA の馬齢は1月に加算、生後の年数は春生まれとして数える', () => {
     expect(bioAge(2024, { year: 2026, week: 1 })).toBeCloseTo(1.7, 1);
