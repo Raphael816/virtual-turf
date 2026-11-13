@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { type Aptitudes, distanceFit, distanceMark, gradeOf, profileOf, raceAbility } from '../src/core/ability';
 import { type RaceConditions, simulateRace } from '../src/core/sim';
-import { HAND } from '../src/core/track';
+import { COURSES } from '../src/core/track';
+
+const HAND = COURSES.turf.hand;
 import { type Horse, HORSES } from '../src/data/roster';
 
 /** 平均的な馬（追加の能力・適性もすべて平均）。over で一部だけ変える */

@@ -3,10 +3,8 @@
  * Canvas にコース全体と各馬の位置を描く。
  */
 import type { RaceCard } from '../core/meeting';
-import { COURSES, type Course, courseBounds, courseFor, pointAt, raceU } from '../core/track';
-
-const BOUNDS = courseBounds();
-const MID = { x: (BOUNDS.minX + BOUNDS.maxX) / 2, z: (BOUNDS.minZ + BOUNDS.maxZ) / 2 };
+import { type Course, type CourseId, courseBounds, courseFor, pointAt, raceU, venueCourses } from '../core/track';
+import { DEFAULT_VENUE, type VenueId } from '../data/venues';
 import { GATE_COLORS } from '../data/roster';
 import type { CameraMode, HorseFrame, RaceViewer } from './types';
 
@@ -15,14 +13,21 @@ export class Viewer2D implements RaceViewer {
   private canvas = document.createElement('canvas');
   private ctx = this.canvas.getContext('2d')!;
   private card: RaceCard | null = null;
-  private course: Course = COURSES.turf;
+  private venue: VenueId = DEFAULT_VENUE;
+  private courses: Record<CourseId, Course> = venueCourses(DEFAULT_VENUE);
+  private course: Course = this.courses.turf;
+  private bounds = courseBounds(DEFAULT_VENUE);
   private container: HTMLElement | null = null;
   private baseScale = 1;
   private scale = 1;
   private dpr = 1;
   private follow = -1;
   private mode: CameraMode = 'overview';
-  private center = { ...MID };
+  private center = { x: 0, z: 0 };
+  private get mid() {
+    const b = this.bounds;
+    return { x: (b.minX + b.maxX) / 2, z: (b.minZ + b.maxZ) / 2 };
+  }
 
   mount(container: HTMLElement): void {
     this.container = container;
@@ -35,7 +40,14 @@ export class Viewer2D implements RaceViewer {
 
   setRace(card: RaceCard): void {
     this.card = card;
-    this.course = courseFor(card.conditions.surface, card.conditions.layout);
+    const v = card.conditions.venue ?? DEFAULT_VENUE;
+    if (v !== this.venue) {
+      this.venue = v;
+      this.courses = venueCourses(v);
+      this.bounds = courseBounds(v);
+      this.resize();
+    }
+    this.course = courseFor(card.conditions.surface, card.conditions.layout, v);
   }
 
   /** 全景以外のカメラでは、先頭（または注目馬）を中心に拡大する */
@@ -55,8 +67,8 @@ export class Viewer2D implements RaceViewer {
     this.canvas.style.width = `${w}px`;
     this.canvas.style.height = `${h}px`;
     // 全コースの外ラチまで収まるように縮尺を決める（スタンドの分も少し余白を取る）
-    const halfW = (BOUNDS.maxX - BOUNDS.minX) / 2 + 20;
-    const halfH = (BOUNDS.maxZ - BOUNDS.minZ) / 2 + 30;
+    const halfW = (this.bounds.maxX - this.bounds.minX) / 2 + 20;
+    const halfH = (this.bounds.maxZ - this.bounds.minZ) / 2 + 30;
     this.baseScale = Math.min(this.canvas.width / (2 * halfW), this.canvas.height / (2 * halfH));
     this.scale = this.baseScale;
   }
@@ -93,7 +105,7 @@ export class Viewer2D implements RaceViewer {
     // カメラ：全景は固定、それ以外は対象を中心に3.5倍
     if (this.mode === 'overview' || horses.length === 0) {
       this.scale = this.baseScale;
-      this.center = { ...MID };
+      this.center = { ...this.mid };
     } else {
       const target =
         horses.find((h) => h.index === this.follow && this.mode === 'follow') ??
@@ -107,9 +119,10 @@ export class Viewer2D implements RaceViewer {
     ctx.fillStyle = '#16301f';
     ctx.fillRect(0, 0, width, height);
     const on = (c: Course) => c.id === active.id;
-    this.band(COURSES.turfOuter, on(COURSES.turfOuter) ? '#4f9f5f' : '#2f6b3c', 660, 1545);
-    this.band(COURSES.turf, on(COURSES.turf) || on(COURSES.turfOuter) ? '#3f8f4f' : '#2f6b3c');
-    this.band(COURSES.dirt, on(COURSES.dirt) ? '#a07a52' : '#6b5640');
+    const cs = this.courses;
+    if (cs.turfOuter !== cs.turf) this.band(cs.turfOuter, on(cs.turfOuter) ? '#4f9f5f' : '#2f6b3c');
+    this.band(cs.turf, on(cs.turf) || on(cs.turfOuter) ? '#3f8f4f' : '#2f6b3c');
+    this.band(cs.dirt, on(cs.dirt) ? '#a07a52' : '#6b5640');
 
     // ゴール板
     const f0 = pointAt(active, active.finishU, 0);
@@ -133,8 +146,8 @@ export class Viewer2D implements RaceViewer {
 
     // スタンド（ホームストレッチ側）
     ctx.fillStyle = '#3a4a5a';
-    const fin = pointAt(COURSES.turf, COURSES.turf.finishU, 0);
-    const [gx, gy] = this.toScreen(fin.x + 40 - 190, COURSES.turf.radius + COURSES.turf.width + 22);
+    const fin = pointAt(cs.turf, cs.turf.finishU, 0);
+    const [gx, gy] = this.toScreen(fin.x + 40 * cs.turf.hand - 190, fin.z + cs.turf.width + 22);
     ctx.fillRect(gx, gy, 380 * this.scale, 14 * this.scale);
 
     // 馬（後ろの順位から描いて、先頭を上に重ねる）

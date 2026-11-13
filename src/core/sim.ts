@@ -8,6 +8,7 @@ import type { Horse, RunningStyle } from '../data/roster';
 import { type AptitudeBreakdown, type ExtendedAbilities, profileOf, raceAbility } from './ability';
 import { Rng } from './rng';
 import { weightEffect } from './raceclass';
+import { VENUES, type VenueId } from '../data/venues';
 import { type Surface, cornersOnRoute, courseFor, courseTraits, curvatureAt, gradeAt, raceU } from './track';
 
 /**
@@ -15,7 +16,7 @@ import { type Surface, cornersOnRoute, courseFor, courseTraits, curvatureAt, gra
  * 3.1.0: 出走時点の状態（調子・疲労・精神的疲労）を計算に入れる
  * 3.0.0: 能力・適性を拡張（持続力・操縦性・健康・距離の幅・回り・坂・小回り・直線・季節）、脚質の位置取りを展開で変える
  */
-export const ENGINE_VERSION = 'sim-3.2.0';
+export const ENGINE_VERSION = 'sim-3.3.0';
 
 export type Weather = 'sunny' | 'cloudy' | 'drizzle' | 'rain';
 export type Going = 'good' | 'yielding' | 'soft' | 'heavy';
@@ -27,9 +28,13 @@ export const TIME_LABEL: Record<TimeOfDay, string> = { day: 'デイ', dusk: '薄
 export const SURFACE_LABEL: Record<Surface, string> = { turf: '芝', dirt: 'ダート' };
 
 /** 「芝外1600m」「ダ1800m」のような短い表記 */
-export function courseShort(c: Pick<RaceConditions, 'surface' | 'layout' | 'distance'>): string {
-  if (c.surface === 'dirt') return `ダ${c.distance}m`;
-  return `芝${c.layout === 'outer' ? '外' : c.layout === 'inner' ? '内' : ''}${c.distance}m`;
+export function courseShort(c: Pick<RaceConditions, 'surface' | 'layout' | 'distance'> & { venue?: VenueId }): string {
+  // 競馬場のあるレース（第6段階から）は場名を付ける（「東京芝1600m」）。外回りのない場は内・外を付けない
+  const v = c.venue ? VENUES[c.venue] : undefined;
+  const prefix = v ? v.name : '';
+  if (c.surface === 'dirt') return `${prefix}ダ${c.distance}m`;
+  const lay = v && !v.outer ? '' : c.layout === 'outer' ? '外' : c.layout === 'inner' ? '内' : '';
+  return `${prefix}芝${lay}${c.distance}m`;
 }
 
 export interface RaceConditions {
@@ -42,6 +47,8 @@ export interface RaceConditions {
   timeOfDay: TimeOfDay;
   /** ゲーム内の月（季節の適性に使う。ない場合は季節の影響なし） */
   month?: number;
+  /** 競馬場（第6段階から。ない場合は中山） */
+  venue?: VenueId;
 }
 
 export interface SimRunner {
@@ -163,16 +170,43 @@ const clamp = (v: number, lo: number, hi: number) => (v < lo ? lo : v > hi ? hi 
  */
 export const TUNE = { relax: 0.25, saveKick: 0.07, duelDrain: 1.3, draft: 0.94, myPace: 0.99, leaderRelax: 0, fadeFloor: 0.8, relaxDistExp: 0.7, respondWindow: 1.4 };
 
+/** 距離による速さの倍率（推定の較正。1,800〜2,400m を基準の 1） */
+const DIST_SPEED: [number, number][] = [
+  [1000, 1.075],
+  [1200, 1.045],
+  [1400, 1.028],
+  [1600, 1.016],
+  [1800, 1.0],
+  [2400, 1.0],
+  [3600, 1.0],
+];
+function interp(table: [number, number][], x: number): number {
+  if (x <= table[0][0]) return table[0][1];
+  for (let i = 1; i < table.length; i++) {
+    if (x <= table[i][0]) {
+      const [x0, y0] = table[i - 1];
+      const [x1, y1] = table[i];
+      return y0 + ((y1 - y0) * (x - x0)) / (x1 - x0);
+    }
+  }
+  return table[table.length - 1][1];
+}
+
 export function simulateRace(cond: RaceConditions, runners: SimRunner[], seed: string, opts: SimOptions = {}): SimResult {
   const dt = opts.dt ?? 0.1;
   const record = opts.record ?? true;
   const rng = new Rng(`${seed}|${ENGINE_VERSION}`);
-  const course = courseFor(cond.surface, cond.layout);
+  const course = courseFor(cond.surface, cond.layout, cond.venue);
   const n = runners.length;
   const D = cond.distance;
   const g = GOING_INDEX[cond.going];
   const cruiseFrac = 0.955 - (0.035 * (D - 1200)) / 1200;
   const goingDrain = cond.surface === 'turf' ? 1 + 0.06 * g : 1 + 0.02 * g;
+
+  // 距離による速さ（推定の較正）：短距離ほど道中が速い。JRA の良馬場の一般的な走破時計の目安に合わせる（docs/11-venues.md）
+  const distSpeed = interp(DIST_SPEED, D);
+  // 北海道（札幌・函館）の洋芝は、野芝より時計がかかる（公式のコース紹介）
+  const grassSpeed = cond.surface === 'turf' && cond.venue && VENUES[cond.venue].grass === '洋芝' ? 0.994 : 1;
 
   // ---- 馬ごとのパラメータ（能力・適性の効き方は ability.ts。乱数の消費順は固定） ----
   const traits = courseTraits(course);
@@ -181,7 +215,7 @@ export function simulateRace(cond: RaceConditions, runners: SimRunner[], seed: s
     const prof = profileOf(h);
     const ab = raceAbility(prof, { surface: cond.surface, distance: D, goingIndex: g, course: traits, month: cond.month });
     const condition = rng.normal(0, ab.conditionSd);
-    const base = cond.surface === 'turf' ? 17.9 - 0.12 * g : 17.3 + 0.07 * g;
+    const base = (cond.surface === 'turf' ? 17.9 - 0.12 * g : 17.3 + 0.07 * g) * distSpeed * grassSpeed;
     const vTop0 = base + (h.speed - 75) * 0.018 + ab.speedAdj + condition;
     // 負担重量（raceclass.ts。1kg ≒ 1馬身の目安）
     const we = weightEffect(r.weight, D);
@@ -245,7 +279,13 @@ export function simulateRace(cond: RaceConditions, runners: SimRunner[], seed: s
   const expectedTime = D / paceRef;
   const spurtFrac = Math.min(0.5, 600 / D);
   const relaxScale = Math.pow(1600 / D, TUNE.relaxDistExp);
-  const drainK = (0.85 * 1.125) / (expectedTime * ((1 - spurtFrac) * Math.pow(cruiseFrac, 4) + spurtFrac));
+  // 騎手は出走馬のスタミナに見合ったペースで乗る：長距離で出走馬のスタミナ（中央値）が距離に足りないときは、消耗を小さくする
+  // （3,000m級で全頭がばてて走破時計が極端に遅くなるのを防ぐ。スタミナの相対的な差はそのまま効く）
+  const sfs = P.map((p) => p.staminaFactor).sort((a, b) => a - b);
+  const sfMed = sfs[Math.floor(sfs.length / 2)];
+  // 2,400m までは補正なし、3,000m 以上で半分（平方根）まで。中距離ではスタミナの差がそのまま効く
+  const relief = 0.5 * clamp((D - 2400) / 600, 0, 1);
+  const drainK = ((0.85 * 1.125) / (expectedTime * ((1 - spurtFrac) * Math.pow(cruiseFrac, 4) + spurtFrac))) * Math.pow(Math.min(1, sfMed / 1.125), relief);
 
   // ---- 状態 ----
   const x = new Float64Array(n);

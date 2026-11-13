@@ -1,5 +1,5 @@
 import { raceStatus } from '../../core/raceflow';
-import { TRACK_NAME } from '../../data/roster';
+import { venueName } from '../../data/venues';
 import { gameDateText } from '../common';
 import { type Page, conditionText, statusChip, statusOf, surfaceChip, timingText } from '../common';
 import { store } from '../store';
@@ -14,7 +14,7 @@ export function racesPage(): Page {
     const allDone = m.cards.every((c) => raceStatus(m.runtime[c.id], now) === 'finished');
     el.innerHTML = `
       <h1>レース一覧</h1>
-      <p class="muted">${gameDateText()}・${TRACK_NAME}。各レースは締切時刻になると自動で発走し、確定します（約4分間隔）。すべて確定すると、翌週の開催日が自動で始まります（ゲーム内の時間は現実の時刻で進みます）。</p>
+      <p class="muted">${gameDateText()}・${venueName(store.state.meeting?.cards[0]?.conditions.venue)}。各レースは締切時刻になると自動で発走し、確定します（約4分間隔）。すべて確定すると、翌週の開催日が自動で始まります（ゲーム内の時間は現実の時刻で進みます）。</p>
       ${allDone ? `<p class="notice notice-info" style="margin-bottom:12px">本日のレースはすべて確定しました。<button class="btn btn-sm" data-new style="margin-left:8px">新しい開催を始める</button></p>` : ''}
       <ul class="race-list">
         ${m.cards

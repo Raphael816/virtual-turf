@@ -406,6 +406,7 @@ export function racePage(raceId: string): Page {
     viewer = null;
     const prefs = force2d ? { ...store.prefs, viewer: '2d' as const } : store.prefs;
     let v = await createViewer(prefs, {
+      venue: card.conditions.venue,
       onFail: () => {
         toast('3D表示を続けられないため、2D上空図に切り替えました。', 'warn');
         void mountViewer(true);

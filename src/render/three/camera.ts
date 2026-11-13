@@ -18,9 +18,9 @@
  * 時速60km近い馬に遅れずに滑らかに追う。ショットの切替はカット（瞬時）、ショット内は滑らかに動かす。
  */
 import * as THREE from 'three';
-import { type Course, HAND, curvatureAt, isOnTurn, pointAt, raceU } from '../../core/track';
+import { type Course, curvatureAt, isOnTurn, pointAt, raceU } from '../../core/track';
 import type { CameraMode } from '../types';
-import { STAND_BASE_Y, STAND_Z } from './environment';
+import { STAND_BASE_Y, STAND_X, STAND_Z } from './environment';
 
 export type Shot = 'gate' | 'wide' | 'leaders' | 'side' | 'corner' | 'turn4' | 'headon' | 'finishline' | 'follow';
 
@@ -269,7 +269,8 @@ export class CameraDirector {
       case 'wide':
       case 'leaders': {
         // スタンド屋根の前端に据えた主カメラ。左右に少しだけドリーして角度を保つ
-        pos.set(HAND > 0 ? THREE.MathUtils.clamp(center.x * 0.35, -220, 120) : THREE.MathUtils.clamp(center.x * 0.35, -120, 220), STAND_BASE_Y + 37.5, STAND_Z + 1);
+        // スタンドの範囲（中心 ±190m）の中で動かす
+        pos.set(STAND_X + THREE.MathUtils.clamp((center.x - STAND_X) * 0.35, -170, 170), STAND_BASE_Y + 37.5, STAND_Z + 1);
         margin = this.shot === 'wide' ? 1.08 : 1.3;
         break;
       }
@@ -328,7 +329,7 @@ export class CameraDirector {
         const fx = Math.cos(h.heading);
         const fz = Math.sin(h.heading);
         // 進行方向の外側に少しずらした後方から
-        pos.set(h.wx - fx * 15 + HAND * fz * 5, h.wy + 3.4, h.wz - fz * 15 - HAND * fx * 5);
+        pos.set(h.wx - fx * 15 + course.hand * fz * 5, h.wy + 3.4, h.wz - fz * 15 - course.hand * fx * 5);
         lookTarget = new THREE.Vector3(h.wx + fx * 4, h.wy + 1.3, h.wz + fz * 4);
         margin = 1.6;
         break;
