@@ -1,25 +1,25 @@
 /**
- * コース形状（経路・曲率・起伏）。
+ * コース形状（経路・曲率・起伏）。JRA 10場（src/data/venues.ts）の公開データからの **非公式の再現**。
+ * JRA の図面・写真は使っていない。数値の出典と、推定で補った箇所は docs/05-course-reference.md・docs/11-venues.md に記載。
  *
- * 中山競馬場の公開データ（JRA公式サイト「コース紹介」）を参考にした **非公式の再現**。
- * JRA の図面・写真は使っていない。数値の出典と、推定で補った箇所は docs/05-course-reference.md に記載。
- *
- * - 左回り（HAND = -1）。中山は右回りだが、利用者の希望で左右を反転して左回りにしている（形・距離・起伏は同じ）。
- *   経路は右回りで作り、最後に x を反転する。HAND = 1 にすると中山と同じ右回りに戻る
- * - u はホームストレッチ入口（4コーナー出口）からのラチ沿い距離
- * - 芝 内回り：1周 1,667.1m、直線 310m（4コーナー出口からゴールまで）
- * - 芝 外回り：1周 1,839.7m。2コーナーで内回りから分かれ、3コーナーで合流する（形は推定）
- * - ダート：1周 1,493m、直線 308m
- * - 起伏：芝の高低差 5.3m、ゴール前の上り坂（残り180m〜70m、高低差2.2m）は公式値。それ以外の区間は推定
+ * - 回りは競馬場ごと（右回り・左回り）。経路は右回りで作り、左回りの場は最後に x を反転する
+ * - u はホームストレッチ入口（4コーナー出口）からのラチ沿い距離。ゴールは u = 直線距離
+ * - 1周距離・直線距離・幅員・高低差は公式の値。形（コーナーの半径・ゴールから1コーナーまで）と起伏の形は推定
+ * - 中山だけは、以前から作り込んでいた形（外回りが2コーナーで分かれ3コーナーで合流する形、ゴール前の急坂）を使う
  *
  * 経路は 0.5m 刻みの点列（位置・向き・曲率・標高）として持ち、どんな形でも同じ関数で扱う。
  */
+
+import { DEFAULT_VENUE, type ElevationKeys, type Layout, VENUES, type VenueId, type VenueSpec } from '../data/venues';
 
 export type Surface = 'turf' | 'dirt';
 export type CourseId = 'turf' | 'turfOuter' | 'dirt';
 
 export interface Course {
   id: CourseId;
+  venue: VenueId;
+  /** 1 = 右回り、-1 = 左回り */
+  hand: 1 | -1;
   surface: Surface;
   label: string;
   /** コース幅 (m) */
@@ -55,9 +55,6 @@ export interface TrackPoint {
   /** 勾配（上りが正、2.24% なら 0.0224） */
   grade: number;
 }
-
-/** 回り方向：1 = 右回り（中山と同じ）、-1 = 左回り（左右反転） */
-export const HAND: 1 | -1 = -1;
 
 const STEP = 0.5;
 const STRAIGHT = 400;
@@ -167,6 +164,8 @@ function elevationProfile(n: number, length: number, keys: [number, number][], s
 }
 
 function makeCourse(
+  venue: VenueId,
+  hand: 1 | -1,
   id: CourseId,
   surface: Surface,
   label: string,
@@ -179,7 +178,7 @@ function makeCourse(
 ): Course {
   const r = resample(pts);
   const n = r.xs.length;
-  if (HAND < 0) {
+  if (hand < 0) {
     // 左右反転：位置の x と向きを鏡写しにする（曲率は「内側へ曲がると正」のまま）
     for (let i = 0; i < n; i++) {
       r.xs[i] = -r.xs[i];
@@ -190,6 +189,8 @@ function makeCourse(
   }
   return {
     id,
+    venue,
+    hand,
     surface,
     label,
     width,
@@ -207,7 +208,7 @@ function makeCourse(
   };
 }
 
-// ---------------------------------------------------------------- 中山を参考にしたコース
+// ---------------------------------------------------------------- 中山（以前から作り込んでいた形）
 
 /** 芝・内回りの起伏（推定。ゴール前の坂だけは公式値）。高低差は約5.3m */
 function turfElevation(finishU: number, c: { length: number; corners: [number, number, number, number] }, scale = 1): [number, number][] {
@@ -229,12 +230,12 @@ function turfElevation(finishU: number, c: { length: number; corners: [number, n
   ];
 }
 
-function buildTurfInner(): Course {
+function buildTurfInner(hand: 1 | -1): Course {
   const R = (1667.1 - 2 * STRAIGHT) / TAU; // 約138m
   const pts = trace({ x: STRAIGHT / 2, z: R, h: Math.PI }, [{ line: STRAIGHT }, { r: R, angle: Math.PI }, { line: STRAIGHT }, { r: R, angle: Math.PI }]);
   pts.pop(); // 始点と重複する終点
   const arc = Math.PI * R;
-  return makeCourse('turf', 'turf', '芝・内回り', 26, 310, pts, [STRAIGHT, STRAIGHT + arc, 2 * STRAIGHT + arc, 0], R, (c) => turfElevation(310, c));
+  return makeCourse('nakayama', hand, 'turf', 'turf', '芝・内回り', 26, 310, pts, [STRAIGHT, STRAIGHT + arc, 2 * STRAIGHT + arc, 0], R, (c) => turfElevation(310, c));
 }
 
 /**
@@ -242,7 +243,7 @@ function buildTurfInner(): Course {
  * 外側の向正面を走ってから、3コーナー途中で内回りに接線方向から合流する（すべて右回りの曲線と直線）。
  * 外側への張り出し d は、1周が 1,839.7m になるよう二分探索で決める。
  */
-function buildTurfOuter(): Course {
+function buildTurfOuter(hand: 1 | -1): Course {
   const R = (1667.1 - 2 * STRAIGHT) / TAU;
   const L = STRAIGHT;
   const target = 1839.7;
@@ -287,16 +288,16 @@ function buildTurfOuter(): Course {
   pts.pop();
   const c2 = L + R * b1 + g.t1 + Rb * (Math.PI - b1); // 向正面の始まり
   const c3 = c2 + g.back; // 外回りの3コーナー入口
-  return makeCourse('turfOuter', 'turf', '芝・外回り', 28, 310, pts, [L, c2, c3, 0], R, (c) => turfElevation(310, c));
+  return makeCourse('nakayama', hand, 'turfOuter', 'turf', '芝・外回り', 28, 310, pts, [L, c2, c3, 0], R, (c) => turfElevation(310, c));
 }
 
-function buildDirt(): Course {
+function buildDirt(hand: 1 | -1): Course {
   const R = (1493 - 2 * STRAIGHT) / TAU; // 約110m（芝の内側）
   const pts = trace({ x: STRAIGHT / 2, z: R, h: Math.PI }, [{ line: STRAIGHT }, { r: R, angle: Math.PI }, { line: STRAIGHT }, { r: R, angle: Math.PI }]);
   pts.pop();
   const arc = Math.PI * R;
   // ダートの高低差 4.5m（区間ごとの形は芝と同じ傾向と仮定）
-  return makeCourse('dirt', 'dirt', 'ダート', 22, 308, pts, [STRAIGHT, STRAIGHT + arc, 2 * STRAIGHT + arc, 0], R, (c) => turfElevation(308, c, 4.5 / 5.3));
+  return makeCourse('nakayama', hand, 'dirt', 'dirt', 'ダート', 22, 308, pts, [STRAIGHT, STRAIGHT + arc, 2 * STRAIGHT + arc, 0], R, (c) => turfElevation(308, c, 4.5 / 5.3));
 }
 
 /**
@@ -304,7 +305,7 @@ function buildDirt(): Course {
  * 内回りと完全に一致させる。外回りだけの区間は、自前の起伏の形を保ったまま両端で内回りにつながるよう補正する。
  * （一致させないと、共通区間で同じ場所なのに外回りの方が低くなり、馬が芝の面に沈んで見える）
  */
-function alignOuterElevation(inner: Course, outer: Course): Course {
+function alignOuterElevation(inner: Course, outer: Course, targetRange?: number): Course {
   const n = outer.es.length;
   const nearestInnerU = (x: number, z: number, uGuess: number) => {
     let best = uGuess;
@@ -340,33 +341,194 @@ function alignOuterElevation(inner: Course, outer: Course): Course {
   }
   const es = new Float32Array(outer.es);
   for (let i = 0; i < n; i++) if (shared[i]) es[i] = innerE(innerU[i]);
-  // 外回りだけの区間：両端の差を線形に配分して、内回りの標高へなめらかにつなぐ
-  let a = 0;
-  while (a < n && shared[a]) a++;
-  let b = a;
-  while (b < n && !shared[b]) b++;
-  if (a > 0 && b < n && b > a) {
-    const da = innerE(innerU[a - 1]) - outer.es[a - 1];
-    const db = innerE(innerU[b]) - outer.es[b];
-    for (let i = a; i < b; i++) {
-      const t = (i - a) / (b - a);
-      es[i] = outer.es[i] + da + (db - da) * t;
+  // 外回りだけの区間（1周の中のひと続きの区間ごと）：両端の差を線形に配分して、内回りの標高へなめらかにつなぐ
+  const first = shared.indexOf(true);
+  const runs: { s0: number; len: number; ea: number; eb: number }[] = [];
+  if (first >= 0) {
+    let i = 0;
+    while (i < n) {
+      const s0 = (first + i) % n;
+      if (shared[s0]) {
+        i++;
+        continue;
+      }
+      let len = 0;
+      while (len < n && !shared[(s0 + len) % n]) len++;
+      const before = (s0 - 1 + n) % n;
+      const after = (s0 + len) % n;
+      const da = innerE(innerU[before]) - outer.es[before];
+      const db = innerE(innerU[after]) - outer.es[after];
+      for (let k = 0; k < len; k++) {
+        const j = (s0 + k) % n;
+        const t = (k + 1) / (len + 1);
+        es[j] = outer.es[j] + da + (db - da) * t;
+      }
+      runs.push({ s0, len, ea: innerE(innerU[before]), eb: innerE(innerU[after]) });
+      i += len;
     }
+  }
+  // 外回りだけの区間の起伏を、全体の高低差が公式の値になるまで強める（共通区間に合わせると起伏が小さくなるため）
+  if (targetRange !== undefined && runs.length) {
+    const base = new Float32Array(es);
+    const apply = (k: number) => {
+      for (const r of runs) {
+        for (let q = 0; q < r.len; q++) {
+          const j = (r.s0 + q) % n;
+          const b = r.ea + (r.eb - r.ea) * ((q + 1) / (r.len + 1));
+          es[j] = b + (base[j] - b) * k;
+        }
+      }
+      let lo = Infinity;
+      let hi = -Infinity;
+      for (const e of es) {
+        lo = Math.min(lo, e);
+        hi = Math.max(hi, e);
+      }
+      return hi - lo;
+    };
+    if (apply(1) < targetRange) apply(solve(apply, targetRange, 1, 4));
   }
   return { ...outer, es };
 }
 
-const TURF_INNER = buildTurfInner();
-export const COURSES: Record<CourseId, Course> = {
-  turf: TURF_INNER,
-  turfOuter: alignOuterElevation(TURF_INNER, buildTurfOuter()),
-  dirt: buildDirt(),
-};
+// ---------------------------------------------------------------- 10場の一般的な形
+
+/**
+ * ホームストレッチ（長さ H）・1〜2コーナー（半径 r1）・向正面・3〜4コーナー（半径 r2）からなる閉じた形（右回り）。
+ * 向正面は2つの円の共通接線。r1 = r2 なら左右対称の形になる。
+ * 始点 (x0, zh) から −x 方向へ進み、内側は −z 側。
+ */
+function loopShape(H: number, r1: number, r2: number) {
+  const hb = 2 * Math.atan((r1 - r2) / H); // 向正面の向き（+x からの角度）
+  const B = H * Math.cos(hb) + (r1 - r2) * Math.sin(hb);
+  const a1 = Math.PI + hb;
+  const a2 = Math.PI - hb;
+  return { hb, B, a1, a2, length: H + B + r1 * a1 + r2 * a2 };
+}
+
+function solve(f: (x: number) => number, target: number, lo: number, hi: number): number {
+  for (let i = 0; i < 60; i++) {
+    const mid = (lo + hi) / 2;
+    if (f(mid) < target) lo = mid;
+    else hi = mid;
+  }
+  return (lo + hi) / 2;
+}
+
+/** 起伏：キー点の形を、高低差が公式の値になるよう拡大・縮小する */
+function scaledKeys(keys: ElevationKeys, elevation: number) {
+  return (c: { length: number; corners: [number, number, number, number] }, S: number): [number, number][] => {
+    const L = c.length;
+    const lm = { C: L, S, c1: c.corners[0], c2: c.corners[1], c3: c.corners[2], rem: (r: number) => (((S - r) % L) + L) % L };
+    const raw = keys(lm).map(([u, h]) => [(((u % L) + L) % L), h] as [number, number]);
+    const lo = Math.min(...raw.map((k) => k[1]));
+    const hi = Math.max(...raw.map((k) => k[1]));
+    const k = hi > lo ? elevation / (hi - lo) : 0;
+    return raw.map(([u, h]) => [u, 0.05 + (h - lo) * k] as [number, number]);
+  };
+}
+
+interface LoopParams {
+  H: number;
+  r1: number;
+  r2: number;
+  x0: number;
+  zh: number;
+}
+
+function loopCourse(v: VenueSpec, id: CourseId, surface: Surface, label: string, spec: VenueSpec['turf'], p: LoopParams): Course {
+  const g = loopShape(p.H, p.r1, p.r2);
+  const pts = trace({ x: p.x0, z: p.zh, h: Math.PI }, [{ line: p.H }, { r: p.r1, angle: g.a1 }, { line: g.B }, { r: p.r2, angle: g.a2 }]);
+  pts.pop();
+  const c1 = p.H;
+  const c2 = c1 + p.r1 * g.a1;
+  const c3 = c2 + g.B;
+  const keys = scaledKeys(spec.keys, spec.elevation);
+  const course = makeCourse(v.id, v.hand, id, surface, label, spec.width, spec.straight, pts, [c1, c2, c3, 0], Math.min(p.r1, p.r2), (c) => keys(c, spec.straight));
+  // 起伏の平滑化で高低差が縮むので、公式の値に合わせ直す
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (const e of course.es) {
+    lo = Math.min(lo, e);
+    hi = Math.max(hi, e);
+  }
+  if (hi > lo) for (let i = 0; i < course.es.length; i++) course.es[i] = 0.05 + ((course.es[i] - lo) * spec.elevation) / (hi - lo);
+  return course;
+}
+
+/** 芝と芝の内側のダートのあいだ（m） */
+const INFIELD_GAP = 2;
+
+/**
+ * 中山以外の場：
+ * - 芝（内回り）：ゴールから1コーナー入口までの距離（推定）と直線距離から H を決め、1周距離が公式の値になる半径を求める（左右対称）
+ * - 外回り：ホームストレッチの延長線上で直線が長くなり（4コーナー出口がゴールから遠い）、1〜2コーナーは内回りと共通、
+ *   3〜4コーナーの半径を1周距離が公式の値になるよう求める
+ * - ダート：芝の内側に同じ中心のコーナーで置き（芝の幅＋2m 内側）、1周距離が公式の値になるよう直線の長さを決める
+ */
+function buildVenue(v: VenueSpec): Record<CourseId, Course> {
+  const t = v.turf;
+  const H = t.straight + v.goalToTurn;
+  const R = (t.circumference - 2 * H) / TAU;
+  const zh = R;
+  const x0 = H / 2;
+  const turf = loopCourse(v, 'turf', 'turf', v.outer ? '芝・内回り' : '芝', t, { H, r1: R, r2: R, x0, zh });
+  let outer = turf;
+  if (v.outer) {
+    const o = v.outer;
+    let ext = o.straight - t.straight;
+    let r2 = solve((r) => loopShape(H + ext, R, r).length, o.circumference, R * 0.5, R * 4);
+    let spec = o;
+    // 3〜4コーナーが内回りより小さくなる（内回りの内側に入り込む）ときは、直線を延ばした左右対称の形にする。
+    // 1周距離を優先し、外回りの直線距離は形から決まる値になる（京都：公式 403.7m に対して約 384m。docs/11-venues.md）
+    if (r2 < R) {
+      ext = (o.circumference - t.circumference) / 2;
+      r2 = R;
+      spec = { ...o, straight: t.straight + ext };
+    }
+    outer = alignOuterElevation(turf, loopCourse(v, 'turfOuter', 'turf', '芝・外回り', spec, { H: H + ext, r1: R, r2, x0: x0 + ext, zh }), o.elevation);
+  }
+  const d = v.dirt;
+  // 芝とダートのあいだ：ふつうは2m。ダートの1周が芝に比べて長い場（函館・小倉）は、コーナーが芝にかからないところまで詰める
+  const gMax = (H / 2 + t.width - d.width - 1 - (d.circumference - TAU * (R - t.width)) / 4) / (Math.PI / 2 - 1);
+  const gap = Math.max(0, Math.min(INFIELD_GAP, gMax));
+  const Rd = R - t.width - gap;
+  const Hd = (d.circumference - TAU * Rd) / 2;
+  const dirt = loopCourse(v, 'dirt', 'dirt', 'ダート', d, { H: Hd, r1: Rd, r2: Rd, x0: Hd / 2, zh: zh - t.width - gap });
+  return { turf, turfOuter: outer, dirt };
+}
+
+function buildNakayama(): Record<CourseId, Course> {
+  const hand = VENUES.nakayama.hand;
+  const inner = buildTurfInner(hand);
+  return { turf: inner, turfOuter: alignOuterElevation(inner, buildTurfOuter(hand)), dirt: buildDirt(hand) };
+}
+
+const cache = new Map<VenueId, Record<CourseId, Course>>();
+
+/** 競馬場のコース（内回り・外回り・ダート）。外回りのない場は turfOuter が内回りと同じ */
+export function venueCourses(venue: VenueId = DEFAULT_VENUE): Record<CourseId, Course> {
+  let c = cache.get(venue);
+  if (!c) {
+    c = venue === 'nakayama' ? buildNakayama() : buildVenue(VENUES[venue]);
+    cache.set(venue, c);
+  }
+  return c;
+}
+
+/** 外回りがある場か */
+export function hasOuter(venue: VenueId = DEFAULT_VENUE): boolean {
+  return !!VENUES[venue].outer;
+}
+
+/** 以前からの参照用（中山） */
+export const COURSES: Record<CourseId, Course> = venueCourses(DEFAULT_VENUE);
 
 /** レース条件からコースを選ぶ（芝は layout で内回り/外回り） */
-export function courseFor(surface: Surface, layout?: 'inner' | 'outer'): Course {
-  if (surface === 'dirt') return COURSES.dirt;
-  return layout === 'outer' ? COURSES.turfOuter : COURSES.turf;
+export function courseFor(surface: Surface, layout?: Layout, venue: VenueId = DEFAULT_VENUE): Course {
+  const c = venueCourses(venue);
+  if (surface === 'dirt') return c.dirt;
+  return layout === 'outer' ? c.turfOuter : c.turf;
 }
 
 // ---------------------------------------------------------------- 参照
@@ -395,8 +557,8 @@ export function pointAt(c: Course, uRaw: number, lane: number): TrackPoint {
   const heading = lerpAngle(c.hs[i0], c.hs[i1], t);
   const k = c.ks[i0] + (c.ks[i1] - c.ks[i0]) * t;
   // lane はラチから外側への距離。外側は、右回りでは進行方向の左、左回りでは右
-  const x = c.xs[i0] + (c.xs[i1] - c.xs[i0]) * t + HAND * Math.sin(heading) * lane;
-  const z = c.zs[i0] + (c.zs[i1] - c.zs[i0]) * t - HAND * Math.cos(heading) * lane;
+  const x = c.xs[i0] + (c.xs[i1] - c.xs[i0]) * t + c.hand * Math.sin(heading) * lane;
+  const z = c.zs[i0] + (c.zs[i1] - c.zs[i0]) * t - c.hand * Math.cos(heading) * lane;
   const y = c.es[i0] + (c.es[i1] - c.es[i0]) * t;
   const grade = (c.es[i1] - c.es[i0]) / c.step;
   return { x, y, z, heading, onTurn: Math.abs(k) > 1 / 1500, curvature: k, grade };
@@ -445,12 +607,12 @@ export function cornersOnRoute(c: Course, distance: number): { at: number; corne
 }
 
 /** 全コースの範囲（描画の縮尺用） */
-export function courseBounds(): { minX: number; maxX: number; minZ: number; maxZ: number } {
+export function courseBounds(venue: VenueId = DEFAULT_VENUE): { minX: number; maxX: number; minZ: number; maxZ: number } {
   let minX = Infinity;
   let maxX = -Infinity;
   let minZ = Infinity;
   let maxZ = -Infinity;
-  for (const c of Object.values(COURSES)) {
+  for (const c of Object.values(venueCourses(venue))) {
     for (let i = 0; i < c.xs.length; i += 4) {
       for (const lane of [0, c.width]) {
         const p = pointAt(c, i * c.step, lane);
@@ -467,5 +629,5 @@ export function courseBounds(): { minX: number; maxX: number; minZ: number; maxZ
 /** 適性の計算に使うコースの特徴（ability.ts） */
 export function courseTraits(c: Course): { hand: 1 | -1; straight: number; turnRadius: number; finalHill: number } {
   const hill = elevationAt(c, c.finishU - 70) - elevationAt(c, c.finishU - 180);
-  return { hand: HAND, straight: c.finishU, turnRadius: c.radius, finalHill: Math.max(0, hill) };
+  return { hand: c.hand, straight: c.finishU, turnRadius: c.radius, finalHill: Math.max(0, hill) };
 }

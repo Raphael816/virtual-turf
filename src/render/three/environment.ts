@@ -16,7 +16,8 @@ import * as THREE from 'three';
 import { Sky } from 'three/examples/jsm/objects/Sky.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import type { Going, TimeOfDay, Weather } from '../../core/sim';
-import { COURSES, type Course, HAND, pointAt } from '../../core/track';
+import { type Course, pointAt, venueCourses } from '../../core/track';
+import { DEFAULT_VENUE, type VenueId } from '../../data/venues';
 import { GLSL_NOISE, fbm3, noise3, seededRandom } from './noise';
 import {
   boardTexture,
@@ -40,23 +41,104 @@ export interface EnvQuality {
   shadowSize: number;
 }
 
-const TURF = COURSES.turf;
-const OUTER = COURSES.turfOuter;
-const DIRT = COURSES.dirt;
-const FINISH = pointAt(TURF, TURF.finishU, 0);
+// 競馬場ごとの形（configureVenue で切り替える。モジュールの値として持ち、建物・地形の生成で参照する）
+let TURF: Course;
+let OUTER: Course;
+let DIRT: Course;
+/** 外回りがある場か（ない場は OUTER が内回りと同じ） */
+let HAS_OUTER = false;
+let FINISH: { x: number; y: number; z: number };
+/** 回り（1 = 右、-1 = 左） */
+let HAND: 1 | -1 = 1;
 /** スタンド前面（ホームストレッチ外側）の z 座標 */
-export const STAND_Z = TURF.radius + TURF.width + 22;
+export let STAND_Z = 0;
 /** スタンドの地盤の高さ（ゴール付近のコースの標高） */
-export const STAND_BASE_Y = FINISH.y;
+export let STAND_BASE_Y = 0;
 /** スタンドの中心（ゴール板の少し4コーナー寄り） */
-const STAND_X = FINISH.x + 40 * HAND;
+export let STAND_X = 0;
 const STAND_HALF = 190;
 /** 外回りが内回りから分かれる／合流する u（内回りの座標） */
-const BRANCH_U = 669;
-const JOIN_U = 1364;
-/** 外回り独自の区間（外回りの座標） */
-const OUTER_FROM = 660;
-const OUTER_TO = 1545;
+let BRANCH_U = 0;
+let JOIN_U = 0;
+/** 外回り独自の区間（外回りの座標。OUTER_TO は1周を超えることがある） */
+let OUTER_FROM = 0;
+let OUTER_TO = 0;
+let currentVenue: VenueId | null = null;
+
+/** 外回りのうち内回りの芝から離れている区間と、その分かれ目・合流点の内回りの u */
+function outerSplit(inner: Course, outer: Course) {
+  const n = Math.floor(outer.circumference / 2);
+  const away: boolean[] = [];
+  const nearestU = (x: number, z: number) => {
+    let best = 0;
+    let bd = Infinity;
+    for (let u = 0; u < inner.circumference; u += 2) {
+      const p = pointAt(inner, u, 0);
+      const d = (p.x - x) ** 2 + (p.z - z) ** 2;
+      if (d < bd) {
+        bd = d;
+        best = u;
+      }
+    }
+    return { u: best, d: Math.sqrt(bd) };
+  };
+  for (let i = 0; i < n; i++) {
+    const p = pointAt(outer, i * 2, 0);
+    away.push(nearestU(p.x, p.z).d > inner.width + 1);
+  }
+  // 離れている区間のうち最も長いひと続き（1周をまたぐことがある）
+  let bestStart = 0;
+  let bestLen = 0;
+  for (let i = 0; i < n; i++) {
+    if (!away[i] || away[(i - 1 + n) % n]) continue;
+    let len = 0;
+    while (len < n && away[(i + len) % n]) len++;
+    if (len > bestLen) {
+      bestLen = len;
+      bestStart = i;
+    }
+  }
+  const from = bestStart * 2;
+  const to = from + bestLen * 2;
+  const a = pointAt(outer, from, 0);
+  const b = pointAt(outer, to, 0);
+  let branch = nearestU(a.x, a.z).u;
+  let join = nearestU(b.x, b.z).u;
+  if (join < branch) join += inner.circumference;
+  return { from, to, branch, join };
+}
+
+/** 環境を作る前に、競馬場の形を設定する */
+export function configureVenue(venue: VenueId): void {
+  if (currentVenue === venue) return;
+  currentVenue = venue;
+  const c = venueCourses(venue);
+  TURF = c.turf;
+  OUTER = c.turfOuter;
+  DIRT = c.dirt;
+  HAS_OUTER = OUTER !== TURF;
+  HAND = TURF.hand;
+  FINISH = pointAt(TURF, TURF.finishU, 0);
+  STAND_Z = FINISH.z + TURF.width + 22;
+  STAND_BASE_Y = FINISH.y;
+  STAND_X = FINISH.x + 40 * HAND;
+  if (HAS_OUTER) {
+    const sp = outerSplit(TURF, OUTER);
+    OUTER_FROM = sp.from;
+    OUTER_TO = sp.to;
+    BRANCH_U = sp.branch;
+    JOIN_U = sp.join;
+  }
+  buildTerrain();
+  OUTER_POLY = (() => {
+    const pts: { x: number; z: number }[] = [];
+    for (let u = 0; u < OUTER.circumference; u += 8) {
+      const p = pointAt(OUTER, u, OUTER.width + 8);
+      pts.push({ x: p.x, z: p.z });
+    }
+    return pts;
+  })();
+}
 
 /** 世界座標のノイズで色ムラを付ける（テクスチャの繰り返しを目立たなくする） */
 function addMacroVariation(mat: THREE.MeshStandardMaterial, scale: number, amount: number) {
@@ -83,22 +165,23 @@ interface TerrainSample {
   z: number;
   e: number;
 }
-const TERRAIN_SAMPLES: TerrainSample[] = (() => {
-  const out: TerrainSample[] = [];
-  for (const c of [TURF, OUTER, DIRT]) {
-    for (let u = 0; u < c.circumference; u += 6) {
-      const p = pointAt(c, u, c.width / 2);
-      out.push({ x: p.x, z: p.z, e: p.y });
-    }
-  }
-  return out;
-})();
-const BASE_LEVEL = 2.2;
+let BASE_LEVEL = 2.2;
 const BUCKET = 60;
 const buckets = new Map<string, TerrainSample[]>();
-for (const s of TERRAIN_SAMPLES) {
-  const k = `${Math.floor(s.x / BUCKET)},${Math.floor(s.z / BUCKET)}`;
-  (buckets.get(k) ?? buckets.set(k, []).get(k)!).push(s);
+function buildTerrain() {
+  buckets.clear();
+  let lo = Infinity;
+  for (const c of HAS_OUTER ? [TURF, OUTER, DIRT] : [TURF, DIRT]) {
+    for (let u = 0; u < c.circumference; u += 6) {
+      const p = pointAt(c, u, c.width / 2);
+      const s = { x: p.x, z: p.z, e: p.y };
+      lo = Math.min(lo, p.y);
+      const k = `${Math.floor(s.x / BUCKET)},${Math.floor(s.z / BUCKET)}`;
+      (buckets.get(k) ?? buckets.set(k, []).get(k)!).push(s);
+    }
+  }
+  // 遠くの地盤はコースの最も低い所より少し高い（中山の 2.2m と同じ考え方）
+  BASE_LEVEL = lo + 2.15;
 }
 
 /** 地面の高さ：近くのコースの標高を、離れるにつれて平らな地盤（BASE_LEVEL）へなじませる */
@@ -214,14 +297,7 @@ function crowdMaterial(uniforms: { uTime: { value: number }; uExcite: { value: n
 }
 
 /** 外回りの外ラチで囲まれた範囲（内馬場・内回りとの間の空地を含む）。木や建物はここに置かない */
-const OUTER_POLY: { x: number; z: number }[] = (() => {
-  const pts: { x: number; z: number }[] = [];
-  for (let u = 0; u < OUTER.circumference; u += 8) {
-    const p = pointAt(OUTER, u, OUTER.width + 8);
-    pts.push({ x: p.x, z: p.z });
-  }
-  return pts;
-})();
+let OUTER_POLY: { x: number; z: number }[] = [];
 function insideOuter(x: number, z: number): boolean {
   let inside = false;
   for (let i = 0, j = OUTER_POLY.length - 1; i < OUTER_POLY.length; j = i++) {
@@ -264,7 +340,9 @@ export class Environment {
     private scene: THREE.Scene,
     renderer: THREE.WebGLRenderer,
     private q: EnvQuality,
+    readonly venue: VenueId = DEFAULT_VENUE,
   ) {
+    configureVenue(venue);
     this.pmrem = new THREE.PMREMGenerator(renderer);
     scene.add(this.group, this.sun, this.sun.target, this.fill, this.fill.target, this.hemi);
     this.sky.scale.setScalar(4000);
@@ -306,9 +384,13 @@ export class Environment {
       return tc.setScalar(stripe).lerp(worn, wear * 0.32);
     };
     const turf = new THREE.Mesh(ribbon(TURF, 0, TURF.width, 0.03, 8, big ? 12 : 6, turfColor), this.turfMat);
-    const outerTurf = new THREE.Mesh(ribbon(OUTER, 0, OUTER.width, 0.031, 8, big ? 12 : 6, turfColor, OUTER_FROM, OUTER_TO), outerMat);
-    turf.receiveShadow = outerTurf.receiveShadow = true;
-    this.group.add(turf, outerTurf);
+    turf.receiveShadow = true;
+    this.group.add(turf);
+    if (HAS_OUTER) {
+      const outerTurf = new THREE.Mesh(ribbon(OUTER, 0, OUTER.width, 0.031, 8, big ? 12 : 6, turfColor, OUTER_FROM, OUTER_TO), outerMat);
+      outerTurf.receiveShadow = true;
+      this.group.add(outerTurf);
+    }
 
     // ---- ダートコース ----
     const dirtTex = dirtTextures(big ? 512 : 256);
@@ -341,7 +423,7 @@ export class Environment {
     legs.position.set(0, -12, -1);
     boardGroup.add(this.board, frame, legs);
     const bx = -40 * HAND;
-    const bz = 70;
+    const bz = FINISH.z - 68;
     const by = terrainHeight(bx, bz) + 13;
     boardGroup.scale.setScalar(0.85);
     boardGroup.position.set(bx, by, bz);
@@ -390,15 +472,22 @@ export class Environment {
     postGeo.translate(0, 0.525, 0);
     const step = big ? 2.5 : 5;
     // [コース, レーン, 開始u, 終了u]：外回りが分かれる・合流する所は内回りの外ラチを開ける
-    const rails: [Course, number, number, number][] = [
-      [TURF, -0.4, 0, TURF.circumference],
-      [TURF, TURF.width + 0.4, BRANCH_U + 70, JOIN_U - 70],
-      [TURF, TURF.width + 0.4, JOIN_U + 5, TURF.circumference + BRANCH_U - 5],
-      [OUTER, -0.4, OUTER_FROM + 80, OUTER_TO - 80],
-      [OUTER, OUTER.width + 0.4, OUTER_FROM - 10, OUTER_TO + 10],
-      [DIRT, -0.4, 0, DIRT.circumference],
-      [DIRT, DIRT.width + 0.4, 0, DIRT.circumference],
-    ];
+    const rails: [Course, number, number, number][] = HAS_OUTER
+      ? [
+          [TURF, -0.4, 0, TURF.circumference],
+          [TURF, TURF.width + 0.4, BRANCH_U + 70, JOIN_U - 70],
+          [TURF, TURF.width + 0.4, JOIN_U + 5, TURF.circumference + BRANCH_U - 5],
+          [OUTER, -0.4, OUTER_FROM + 80, OUTER_TO - 80],
+          [OUTER, OUTER.width + 0.4, OUTER_FROM - 10, OUTER_TO + 10],
+          [DIRT, -0.4, 0, DIRT.circumference],
+          [DIRT, DIRT.width + 0.4, 0, DIRT.circumference],
+        ]
+      : [
+          [TURF, -0.4, 0, TURF.circumference],
+          [TURF, TURF.width + 0.4, 0, TURF.circumference],
+          [DIRT, -0.4, 0, DIRT.circumference],
+          [DIRT, DIRT.width + 0.4, 0, DIRT.circumference],
+        ];
     for (const [course, lane, from, to] of rails) {
       this.group.add(new THREE.Mesh(railGeometry(course, lane, from, to, 1.05, 0.06), white));
       const n = Math.floor((to - from) / step);
@@ -505,7 +594,7 @@ export class Environment {
     // 前のエプロン（舗装）：コースの外ラチからスタンドまで
     const apronMat = new THREE.MeshStandardMaterial({ color: '#8f9396', roughness: 1 });
     addMacroVariation(apronMat, 0.05, 0.12);
-    const apronDepth = STAND_Z - (TURF.radius + TURF.width + 2);
+    const apronDepth = STAND_Z - (FINISH.z + TURF.width + 2);
     const apron = new THREE.Mesh(new THREE.PlaneGeometry(STAND_HALF * 2 + 40, apronDepth), apronMat);
     apron.rotation.x = -Math.PI / 2;
     apron.position.set(X, Y + 0.05, STAND_Z - apronDepth / 2);
@@ -676,7 +765,7 @@ export class Environment {
     let k = 0;
     for (let i = 0; i < n; i++) {
       const p = pointAt(OUTER, i * step, OUTER.width + 2.2);
-      if (p.z > TURF.radius && Math.abs(p.x - STAND_X) < STAND_HALF + 10) continue; // スタンド前は開ける
+      if (p.z > FINISH.z && Math.abs(p.x - STAND_X) < STAND_HALF + 10) continue; // スタンド前は開ける
       m.makeRotationY(-p.heading).setPosition(p.x, p.y, p.z);
       inst.setMatrixAt(k++, m);
     }
@@ -691,7 +780,8 @@ export class Environment {
    */
   private addInfield(big: boolean) {
     const R = DIRT.radius - 32;
-    const L = 360;
+    // ダートの直線より短く（札幌のように直線の短い場でもダートの内側に収める）
+    const L = Math.min(360, (DIRT.circumference - 2 * Math.PI * DIRT.radius) / 2 - 40);
     const width = 20;
     const hurdleMat = new THREE.MeshStandardMaterial({ map: this.turfMat.map, normalMap: this.turfMat.normalMap, roughness: 0.95, color: '#d7e3cf' });
     addMacroVariation(hurdleMat, 0.03, 0.15);
@@ -909,7 +999,7 @@ export class Environment {
     }
     this.sun.color.set(sunColor);
     this.sun.intensity = sunI;
-    this.focusShadow(0, TURF.radius, this.shadowRadius);
+    this.focusShadow(0, FINISH.z, this.shadowRadius);
 
     const lit = timeOfDay !== 'day';
     this.lampMat.emissive.set(lit ? '#fff6e6' : '#000000');
@@ -954,6 +1044,25 @@ export class Environment {
     this.crowdUniforms.uTime.value = time;
     this.crowdUniforms.uExcite.value += (excitement - this.crowdUniforms.uExcite.value) * 0.05;
     this.clouds.rotation.y = time * 0.002;
+  }
+
+  /** 競馬場を切り替えるとき：この環境が加えたものだけを取り除いて解放する（馬などは残す） */
+  detach() {
+    const own: THREE.Object3D[] = [this.group, this.sun, this.sun.target, this.fill, this.fill.target, this.hemi, this.sky, this.clouds];
+    for (const o of own) {
+      this.scene.remove(o);
+      o.traverse((x) => {
+        const mesh = x as THREE.Mesh;
+        if (mesh.geometry) mesh.geometry.dispose();
+        const mats = Array.isArray(mesh.material) ? mesh.material : mesh.material ? [mesh.material] : [];
+        for (const mat of mats) {
+          for (const v of Object.values(mat)) if (v instanceof THREE.Texture) v.dispose();
+          mat.dispose();
+        }
+      });
+    }
+    this.envRT?.dispose();
+    this.pmrem.dispose();
   }
 
   dispose() {

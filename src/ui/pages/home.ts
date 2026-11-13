@@ -1,5 +1,5 @@
 import { BET_LIMITS_ENABLED, activeRestriction, dayStats, effectiveLimits } from '../../core/responsible';
-import { TRACK_NAME } from '../../data/roster';
+import { venueName } from '../../data/venues';
 import { gameDateText } from '../common';
 import {
   type Page,
@@ -31,7 +31,7 @@ export function homePage(): Page {
       ${restricted ? `<p class="notice" style="margin-bottom:12px">現在、休止または自己排除の期間中です。観戦はできますが投票はできません。</p>` : ''}
       <section class="hero">
         <div class="card next-race" aria-labelledby="next-h">
-          <p class="muted" style="margin:0">${gameDateText()}・${TRACK_NAME}</p>
+          <p class="muted" style="margin:0">${gameDateText()}・${venueName(store.state.meeting?.cards[0]?.conditions.venue)}</p>
           ${
             next
               ? `<h2 id="next-h" class="title">${raceTitle(next)}</h2>
