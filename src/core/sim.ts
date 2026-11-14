@@ -210,7 +210,7 @@ export const TUNE = {
   draft: 0.97,
   myPace: 0.99,
   leaderRelax: 0,
-  fadeFloor: 0.85,
+  fadeFloor: 0.9,
   relaxDistExp: 0.7,
   respondWindow: 1.4,
   // 第8段階
@@ -226,6 +226,7 @@ export const TUNE = {
   earlyDash: 0.06,
   tuckAhead: 0.4,
   tuckBehind: 0.8,
+  spreadScale: 1,
   fight: 0.02,
 };
 /**
@@ -334,7 +335,8 @@ export function simulateRace(cond: RaceConditions, runners: SimRunner[], seed: s
     const condition = rng.normal(0, ab.conditionSd * TUNE.condScale);
     const base = (cond.surface === 'turf' ? 17.9 - 0.12 * g : (17.3 + 0.07 * g) * 0.993) * distSpeed * grassSpeed;
     // スピードの差は短距離ほど効く（道中から最高速度に近いペースで流れるため。長距離はスタミナの比重が増す）
-    const vTop0 = base + (h.speed - 75) * 0.018 * speedK + ab.speedAdj + condition;
+    // 能力・適性・当日の出来による速度の差は TUNE.spreadScale 倍にそろえて縮める（第8段階：着差が実際の競馬に近くなるように）
+    const vTop0 = base + ((h.speed - 75) * 0.018 * speedK + ab.speedAdj + condition) * TUNE.spreadScale;
     // 負担重量（raceclass.ts。1kg ≒ 1馬身の目安）
     const we = weightEffect(r.weight, D);
     const vTop = vTop0 * we.speed;
@@ -347,14 +349,15 @@ export function simulateRace(cond: RaceConditions, runners: SimRunner[], seed: s
     // 仕掛けの地点は騎手の判断でばらつく（第8段階で幅を 40m → TUNE.timingSd に）
     const spurtDist = (580 + (SPURT_DIST[h.style] - 580) * TUNE.spurtSpread) * clamp(D / 1600, 0.85, 1.2) + rng.normal(0, TUNE.timingSd);
     const gapFrac = GAP_FRAC[h.style] + rng.normal(0, ab.positionNoise * TUNE.posScale);
-    const kick = rng.normal(0, TUNE.kickSd) + ab.kick;
+    const kick = (rng.normal(0, TUNE.kickSd) + ab.kick) * TUNE.spreadScale;
     return {
       style: h.style,
       vTop,
       aptitude: ab.speedAdj,
       breakdown: ab.breakdown,
       condition,
-      staminaFactor: ab.staminaFactor * we.stamina,
+      // スタミナの差も同じ割合で縮める（速度の差だけ縮めると、相対的にスタミナが効きすぎる）
+      staminaFactor: (1.125 + (ab.staminaFactor - 1.125) * TUNE.spreadScale) * we.stamina,
       weight: r.weight,
       weightEffect: vTop - vTop0,
       kakari,
