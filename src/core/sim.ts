@@ -206,11 +206,11 @@ const clamp = (v: number, lo: number, hi: number) => (v < lo ? lo : v > hi ? hi 
 export const TUNE = {
   relax: 0.18,
   saveKick: 0.02,
-  duelDrain: 2.4,
+  duelDrain: 3.0,
   draft: 0.94,
-  myPace: 0.99,
+  myPace: 1.0,
   leaderRelax: 0,
-  fadeFloor: 0.9,
+  fadeFloor: 0.92,
   relaxDistExp: 0.7,
   respondWindow: 1.4,
   // 第8段階
@@ -228,7 +228,15 @@ export const TUNE = {
   tuckBehind: 0.8,
   spreadScale: 1,
   ease: 0.3,
+  easeFloor: 0.95,
+  breakSd: 0.15,
   tuckSlow: 0.03,
+  ownPaceGap: 0.4,
+  spareS: 0,
+  spareCut: 0.03,
+  fadeThr: 1,
+  drainGap: 0.05,
+  condClip: 3,
   fight: 0.02,
 };
 /**
@@ -247,6 +255,8 @@ const START_LOSS = 1.0;
 export const PACE_THRESH = { slow: -0.0135, high: 0.0135 };
 const PACE_SLOW = (): number => PACE_THRESH.slow;
 const PACE_HIGH = (): number => PACE_THRESH.high;
+/** 適性による減点の頭打ち（m/s） */
+const APT_CAP = 0.25;
 const TRACK: Record<RunningStyle, number> = { nige: 1, senko: 0.85, sashi: 0.55, oikomi: 0.3 };
 
 /** 距離による速さの倍率（推定の較正。1,800〜2,400m を基準の 1） */
@@ -334,18 +344,22 @@ export function simulateRace(cond: RaceConditions, runners: SimRunner[], seed: s
     const prof = profileOf(h);
     const ab = raceAbility(prof, { surface: cond.surface, distance: D, goingIndex: g, course: traits, month: cond.month });
     // 当日の出来（調子とは別の、その日のレースでの能力の出し具合）。第8段階で幅を広げた（TUNE.condScale）
-    const condition = rng.normal(0, ab.conditionSd * TUNE.condScale);
+    // 極端に悪い・良い出来は ±condClip σ で頭打ち（大敗が重なりすぎない）
+    const condition = clamp(rng.normal(0, 1), -TUNE.condClip, TUNE.condClip) * ab.conditionSd * TUNE.condScale;
     const base = (cond.surface === 'turf' ? 17.9 - 0.12 * g : (17.3 + 0.07 * g) * 0.993) * distSpeed * grassSpeed;
     // スピードの差は短距離ほど効く（道中から最高速度に近いペースで流れるため。長距離はスタミナの比重が増す）
     // 能力・適性・当日の出来による速度の差は TUNE.spreadScale 倍にそろえて縮める（第8段階：着差が実際の競馬に近くなるように）
-    const vTop0 = base + ((h.speed - 75) * 0.018 * speedK + ab.speedAdj + condition) * TUNE.spreadScale;
+    // 適性の減点は −0.25 m/s まではそのまま、それを超える分はなめらかに頭打ちにする（最大で約 −0.4 m/s。極端に遅れすぎない）
+    const aptAdj = ab.speedAdj >= -APT_CAP ? ab.speedAdj : -APT_CAP - 0.15 * (1 - Math.exp((ab.speedAdj + APT_CAP) / 0.15));
+    const vTop0 = base + ((h.speed - 75) * 0.018 * speedK + aptAdj + condition) * TUNE.spreadScale;
     // 負担重量（raceclass.ts。1kg ≒ 1馬身の目安）
     const we = weightEffect(r.weight, D);
     const vTop = vTop0 * we.speed;
     const kakari = rng.chance(ab.kakariProb);
     const kakariStart = rng.range(4, 12);
     const kakariDur = rng.range(10, 28) * ab.kakariDuration;
-    let startDelay = ab.startDelay + Math.abs(rng.normal(0, 0.06));
+    // ゲートの出のばらつき（第8段階で 0.06 → 0.15 秒。出の速かった馬が先に内へ切れ込める）
+    let startDelay = ab.startDelay + Math.abs(rng.normal(0, TUNE.breakSd));
     const lateStart = rng.chance(ab.lateStartProb);
     if (lateStart) startDelay += rng.range(0.5, 1.0);
     // 仕掛けの地点は騎手の判断でばらつく（第8段階で幅を 40m → TUNE.timingSd に）
@@ -402,7 +416,8 @@ export function simulateRace(cond: RaceConditions, runners: SimRunner[], seed: s
     }
   }
 
-  const paceRef = (P.reduce((s, p) => s + p.vTop, 0) / n) * cruiseFrac;
+  const meanVTop = P.reduce((s, p) => s + p.vTop, 0) / n;
+  const paceRef = meanVTop * cruiseFrac;
   // 隊列の長さ：1頭あたり TUNE.spreadPer m（第8段階で 1.5m → 実際の競馬の道中の隊列（16頭で15〜20馬身）に近づけた）
   const spread = n * TUNE.spreadPer;
   const expectedTime = D / paceRef;
@@ -547,7 +562,8 @@ export function simulateRace(cond: RaceConditions, runners: SimRunner[], seed: s
       const rem = D - xPrev[i];
       const uNow = raceU(course, D, xPrev[i]);
       const grade = gradeAt(course, uNow);
-      const fatigue = S[i] >= p.fadeThreshold ? 1 : TUNE.fadeFloor + ((1 - TUNE.fadeFloor) * S[i]) / p.fadeThreshold;
+      const fth = p.fadeThreshold * TUNE.fadeThr;
+      const fatigue = S[i] >= fth ? 1 : TUNE.fadeFloor + ((1 - TUNE.fadeFloor) * S[i]) / fth;
       const vMax = p.vTop * fatigue * (wearPenalty > 0 ? 1 - wearPenalty * Math.max(0, 1 - lane[i] / 6) : 1);
       const kakariActive = p.kakari && t >= p.kakariStart && t < p.kakariEnd;
       if (p.kakari && Math.abs(t - p.kakariStart) < dt / 2) events.push({ t, type: 'kakari', runner: i });
@@ -582,6 +598,8 @@ export function simulateRace(cond: RaceConditions, runners: SimRunner[], seed: s
       if (spurting[i]) {
         // 脚を溜めた馬ほど末脚が伸びる
         target = vMax * (1 + p.kick + TUNE.saveKick * clamp(S[i] - 0.3, -0.3, 0.4));
+        // 脚の残っていない馬は一杯に追わない（騎手の判断。追えばさらにばてて大きく遅れる）
+        if (S[i] < TUNE.spareS) target = Math.min(target, vMax * (1 - TUNE.spareCut * (1 - S[i] / TUNE.spareS)));
         // 直線の叩き合い：残り300mで、並んで追い比べている馬がいれば、勝負根性の強い方が伸び、弱い方は脚が鈍る
         if (rem < 300) {
           for (let k = 0; k < n; k++) {
@@ -596,10 +614,10 @@ export function simulateRace(cond: RaceConditions, runners: SimRunner[], seed: s
           }
         }
         // 抜け出した馬は、ゴール前で騎手が追うのをやめる（大差がつきすぎない。残り250m、2番手に1.5馬身以上の差があるとき）
-        // 2番手の速さに合わせて流すので、差は流しはじめる差（レースごとに 0.5〜2.5馬身）まで縮んでいく（最高速度の 90% より遅くはしない）
+        // 2番手の速さに合わせて流すので、差は流しはじめる差（レースごとに 0.5〜2.5馬身）まで縮んでいく（最高速度の TUNE.easeFloor より遅くはしない。力の差が大きい馬は大差で勝つ）
         if (i === leader && rem < 300 && second >= 0) {
           const lead = xPrev[i] - xPrev[second];
-          if (lead > easeAt) target = Math.min(target, Math.max(vMax * 0.9, vPrev[second] - (TUNE.ease * (lead - easeAt)) / 2.4));
+          if (lead > easeAt) target = Math.min(target, Math.max(vMax * TUNE.easeFloor, vPrev[second] - (TUNE.ease * (lead - easeAt)) / 2.4));
         }
       } else {
         const gapTarget = (gaveUp[i] ? 0.2 : p.gapFrac) * spread;
@@ -607,7 +625,8 @@ export function simulateRace(cond: RaceConditions, runners: SimRunner[], seed: s
         // 追走する馬は先頭のペースに合わせ、目標の位置との差だけ速度を調整する（逃げ馬のペースが隊列のペースになる）
         const lead = i === leader ? paceRef : Math.max(vPrev[leader], paceRef * 0.95);
         // 先頭が速すぎる（ハイペース）とき、後ろの馬は無理について行かない（TRACK）
-        const tr = TRACK[p.style];
+        // 力の劣る馬（最高速度が出走馬の平均より低い）ほど、騎手は無理について行かず自分のペースを守る（ばてて大きく遅れない）
+        const tr = TRACK[p.style] * clamp(1 - Math.max(0, meanVTop - p.vTop) / TUNE.ownPaceGap, 0.3, 1);
         const base = paceRef + (lead - paceRef) * tr;
         target = base + clamp((gap - gapTarget) * 0.06, -0.15, 0.6 * tr + 0.1);
         if (p.style === 'nige' && !gaveUp[i]) {
@@ -716,7 +735,9 @@ export function simulateRace(cond: RaceConditions, runners: SimRunner[], seed: s
           break;
         }
       }
-      const ratio = vEff / p.vTop;
+      // 消耗の基準の速さ：最高速度が出走馬の平均より低い馬も、平均から TUNE.drainGap までの差として扱う
+      // （力の劣る馬が隊列について行くだけで急にばてて大差で遅れないように。末脚の差では負ける）
+      const ratio = vEff / Math.max(p.vTop, meanVTop - TUNE.drainGap);
       const hillDrain = 1 + 6 * Math.max(0, grade) * p.hill;
       // ハナ争い：逃げ馬どうしが 2.5m 以内で競り合っているか
       let contested = false;
@@ -736,7 +757,7 @@ export function simulateRace(cond: RaceConditions, runners: SimRunner[], seed: s
       const relaxK = 1 - TUNE.relax * relaxScale * behind;
       // ハナ争い：競り合っている間は消耗が大きい
       const duelK = contested ? TUNE.duelDrain : 1;
-      S[i] = Math.max(0, S[i] - (drainK * ratio ** 4 * goingDrain * draft * hillDrain * sustainK * relaxK * duelK * (kakariActive ? 1.4 : 1) * dt) / p.staminaFactor);
+      S[i] = Math.max(0, S[i] - (drainK * ratio ** 4 * goingDrain * draft * hillDrain * sustainK * relaxK * duelK * (kakariActive ? 1.7 : 1) * dt) / p.staminaFactor);
       if (!flags.fade[i] && S[i] < 0.05 && rem > 200) {
         flags.fade[i] = true;
         events.push({ t, type: 'fade', runner: i });
