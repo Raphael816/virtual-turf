@@ -116,13 +116,14 @@ describe('simulateRace: 能力と条件が結果に影響する', () => {
     expect(rate).toBeLessThan(1);
   });
 
-  it('逃げ馬が多いとペースが速くなる（中盤の先頭の速度が上がる）', () => {
+  // 第8段階：ペースは実際の競馬と同じく「前半と後半のタイムの差」（halfDiff。大きいほど前半が速い）で測る
+  it('逃げ馬が多いとペースが速くなる（前半が速く、後半が鈍る）', () => {
     const avgPace = (nigeCount: number) => {
       const hs = Array.from({ length: 12 }, (_, i) =>
         horse(`p${i}`, { style: i < nigeCount ? 'nige' : i % 2 ? 'sashi' : 'senko' }),
       );
       let sum = 0;
-      for (let s = 0; s < 60; s++) sum += simulateRace(MILE, field(hs), `pace${s}`, { record: false }).paceRatio;
+      for (let s = 0; s < 60; s++) sum += simulateRace(MILE, field(hs), `pace${s}`, { record: false }).halfDiff;
       return sum / 60;
     };
     expect(avgPace(4)).toBeGreaterThan(avgPace(0) + 0.005);
