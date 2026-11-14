@@ -207,7 +207,7 @@ export const TUNE = {
   relax: 0.18,
   saveKick: 0.02,
   duelDrain: 2.4,
-  draft: 0.97,
+  draft: 0.94,
   myPace: 0.99,
   leaderRelax: 0,
   fadeFloor: 0.9,
@@ -222,11 +222,13 @@ export const TUNE = {
   makuri: 1.35,
   respondFront: 1.6,
   spurtSpread: 0.5,
-  spreadPer: 2.4,
+  spreadPer: 1.6,
   earlyDash: 0.06,
   tuckAhead: 0.4,
   tuckBehind: 0.8,
   spreadScale: 1,
+  ease: 0.3,
+  tuckSlow: 0.03,
   fight: 0.02,
 };
 /**
@@ -416,6 +418,8 @@ export function simulateRace(cond: RaceConditions, runners: SimRunner[], seed: s
   const usage = interp(USAGE, D);
   // 序盤の位置取り争い（テンの速さ）の区間と強さ
   const finalDecel = interp(FINAL_DECEL, D);
+  // 抜け出した馬を流しはじめる差（m）。騎手と展開による（レースごとに 0.5〜2.5馬身）
+  const easeAt = rng.range(0.5, 2.5) * 2.4;
   const earlyEnd = Math.min(700, D * 0.4);
   // 先手争いの激しさは、ハナを主張する逃げ馬の数で決まる（0頭で半分、1頭で 0.75、2頭で標準、3頭以上で最大 1.25 倍）
   const nigeCount = P.filter((p) => p.style === 'nige').length;
@@ -523,6 +527,9 @@ export function simulateRace(cond: RaceConditions, runners: SimRunner[], seed: s
       meanS += S[k] / n;
     }
     const sortedX = Array.from(xPrev).sort((a, b) => b - a);
+    // 2番手（先頭を除いて最も前にいる、まだ入線していない馬）
+    let second = -1;
+    for (let k = 0; k < n; k++) if (k !== leader && finishT[k] === Infinity && (second < 0 || xPrev[k] > xPrev[second])) second = k;
     const frontX = sortedX[Math.min(n - 1, Math.floor(n * 0.35))];
 
     for (let i = 0; i < n; i++) {
@@ -587,6 +594,12 @@ export function simulateRace(cond: RaceConditions, runners: SimRunner[], seed: s
               break;
             }
           }
+        }
+        // 抜け出した馬は、ゴール前で騎手が追うのをやめる（大差がつきすぎない。残り250m、2番手に1.5馬身以上の差があるとき）
+        // 2番手の速さに合わせて流すので、差は流しはじめる差（レースごとに 0.5〜2.5馬身）まで縮んでいく（最高速度の 90% より遅くはしない）
+        if (i === leader && rem < 300 && second >= 0) {
+          const lead = xPrev[i] - xPrev[second];
+          if (lead > easeAt) target = Math.min(target, Math.max(vMax * 0.9, vPrev[second] - (TUNE.ease * (lead - easeAt)) / 2.4));
         }
       } else {
         const gapTarget = (gaveUp[i] ? 0.2 : p.gapFrac) * spread;
@@ -664,12 +677,16 @@ export function simulateRace(cond: RaceConditions, runners: SimRunner[], seed: s
         }
       } else if (!spurting[i] && lanePrev[i] > 0.8) {
         // 内ラチ沿いへ寄せる（第8段階：前の馬の後ろに入れるなら、すぐ横の馬と重ならない範囲で内へ。外枠の馬も隊列に収まる）
+        let movedIn = false;
         for (const step of [0.9, 0.5]) {
           if (isFree(i, lanePrev[i] - step, TUNE.tuckAhead, TUNE.tuckBehind)) {
             laneTarget[i] = Math.max(0.6, lanePrev[i] - step);
+            movedIn = true;
             break;
           }
         }
+        // 控える（騎手の判断）：序盤に外にいて内へ入れない、ハナを主張しない馬は、少し速度を落として前の馬の後ろに入る
+        if (!movedIn && xPrev[i] < earlyEnd && lanePrev[i] > 1.2 && p.style !== 'nige' && i !== leader) target *= 1 - TUNE.tuckSlow;
       }
 
       // 短距離の終いの失速（全馬に共通）
