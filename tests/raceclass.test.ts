@@ -248,7 +248,7 @@ describe('番組と出馬表', () => {
       horses: w.horses.map(({ earnings: _e, ...h }, i) => ({ ...h, career: { starts: 5, wins: i % 3, seconds: 1, thirds: 0 } })),
     };
     const up = upgradeWorld(old as unknown as World);
-    expect(up.schema).toBe(3);
+    expect(up.schema).toBe(4);
     expect(up.horses.every((h) => typeof h.earnings === 'number' && h.career.starts === 5)).toBe(true);
     // 2勝している馬は少なくとも 2勝クラス
     const two = up.horses.find((_h, i) => i % 3 === 2)!;
