@@ -34,13 +34,13 @@ function horse(id: string, over: Partial<Horse> = {}, apt: Partial<Aptitudes> = 
 const MILE: RaceConditions = { surface: 'turf', distance: 1600, weather: 'sunny', going: 'good', timeOfDay: 'day' };
 
 /** 対象（0番）が比較（1番）に先着する割合。残りは平均的な馬。脚質は混ぜる */
-function beatRate(target: Horse, rival: Horse, cond: RaceConditions = MILE, trials = 160): number {
+function beatRate(target: Horse, rival: Horse, cond: RaceConditions = MILE, trials = 400): number {
   const styles = ['nige', 'senko', 'sashi', 'oikomi', 'senko', 'sashi'] as const;
   const others = styles.map((st, i) => horse(`o${i}`, { style: st }));
   const runners = [target, rival, ...others].map((h, i) => ({ horse: h, number: i + 1 }));
   let ahead = 0;
   for (let s = 0; s < trials; s++) {
-    const r = simulateRace(cond, runners, `ab${s}`, { record: false });
+    const r = simulateRace(cond, runners, `ab${s}`, { record: false, dt: 0.2 });
     if (r.order.indexOf(0) < r.order.indexOf(1)) ahead++;
   }
   return ahead / trials;
@@ -139,9 +139,12 @@ describe('脚質と展開（能力が同じ12頭で集計）', () => {
     const win: Record<string, number> = { nige: 0, senko: 0, sashi: 0, oikomi: 0 };
     let pace = 0;
     for (let s = 0; s < trials; s++) {
-      const r = simulateRace({ ...MILE, distance: D }, hs.map((h, i) => ({ horse: h, number: i + 1 })), `st${s}`, { record: false });
-      win[r.factors[r.order[0]].style]++;
-      pace += r.paceRatio;
+      // 第8段階：枠の有利不利が混ざらないよう、毎回枠を回す（脚質ごとに外枠に偏らせない）
+      const runners = hs.map((h, i) => ({ horse: h, number: ((i + s) % hs.length) + 1 })).sort((a, b) => a.number - b.number);
+      const r = simulateRace({ ...MILE, distance: D }, runners, `st${s}`, { record: false });
+      win[runners[r.order[0]].horse.style]++;
+      // 第8段階：ペースは前半と後半のタイムの差（halfDiff。大きいほど前半が速い）
+      pace += r.halfDiff;
     }
     for (const k of Object.keys(win)) win[k] /= trials;
     return { win, pace: pace / trials };

@@ -135,16 +135,18 @@ describe('負担重量の影響', () => {
     expect(weightEffect(undefined, 2000)).toEqual({ speed: 1, stamina: 1 });
     // 同じ能力の10頭で、1頭だけ 6kg 重い／軽い：重い馬は勝ちにくく、軽い馬は勝ちやすい
     const cond: RaceConditions = { surface: 'turf', distance: 2000, weather: 'sunny', going: 'good', timeOfDay: 'day' };
+    // 枠の有利不利が混ざらないよう、重さを変える馬は真ん中の5番に置き、同じ枠で 56kg のときと比べる
     const rate = (kg: number) => {
-      const runners = Array.from({ length: 10 }, (_, i) => ({ horse: plain(`h${i}`), number: i + 1, weight: i === 0 ? kg : 56 }));
+      const runners = Array.from({ length: 10 }, (_, i) => ({ horse: plain(`h${i}`), number: i + 1, weight: i === 4 ? kg : 56 }));
       let w = 0;
-      for (let s = 0; s < 200; s++) if (simulateRace(cond, runners, `kg${s}`, { record: false }).order[0] === 0) w++;
-      return w / 200;
+      for (let s = 0; s < 400; s++) if (simulateRace(cond, runners, `kg${s}`, { record: false, dt: 0.2 }).order[0] === 4) w++;
+      return w / 400;
     };
+    const base = rate(56);
     const heavy = rate(62);
     const light = rate(50);
-    expect(heavy).toBeLessThan(0.1);
-    expect(light).toBeGreaterThan(0.1);
+    expect(heavy).toBeLessThan(base * 0.75);
+    expect(light).toBeGreaterThan(base * 1.3);
     expect(light).toBeGreaterThan(heavy * 2);
   });
 });
