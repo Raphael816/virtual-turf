@@ -55,6 +55,8 @@ export interface VenueSpec {
   /** 外回り（中山・京都・阪神・新潟） */
   outer?: CourseSpec;
   dirt: CourseSpec;
+  /** 芝の使用コース（仮柵の位置）の数：A〜（公式の各コースデータ） */
+  railCourses: number;
   /** 発走距離（公式。3,600m を超える距離と、新潟の直線1000mは除く） */
   distances: { turf: { d: number; layout?: Layout }[]; dirt: number[] };
 }
@@ -67,6 +69,7 @@ const gentle: ElevationKeys = (l) => lin([l.S, 0.4], [l.c1, 0.6], [l.c2, 1.0], [
 export const VENUES: Record<VenueId, VenueSpec> = {
   sapporo: {
     id: 'sapporo',
+    railCourses: 3,
     name: '札幌',
     hand: 1,
     grass: '洋芝',
@@ -77,6 +80,7 @@ export const VENUES: Record<VenueId, VenueSpec> = {
   },
   hakodate: {
     id: 'hakodate',
+    railCourses: 3,
     name: '函館',
     hand: 1,
     grass: '洋芝',
@@ -94,6 +98,7 @@ export const VENUES: Record<VenueId, VenueSpec> = {
   },
   fukushima: {
     id: 'fukushima',
+    railCourses: 3,
     name: '福島',
     hand: 1,
     grass: '野芝',
@@ -111,6 +116,7 @@ export const VENUES: Record<VenueId, VenueSpec> = {
   },
   niigata: {
     id: 'niigata',
+    railCourses: 2,
     name: '新潟',
     hand: -1,
     grass: '野芝',
@@ -132,6 +138,7 @@ export const VENUES: Record<VenueId, VenueSpec> = {
   },
   tokyo: {
     id: 'tokyo',
+    railCourses: 4,
     name: '東京',
     hand: -1,
     grass: '野芝',
@@ -151,6 +158,7 @@ export const VENUES: Record<VenueId, VenueSpec> = {
   },
   nakayama: {
     id: 'nakayama',
+    railCourses: 3,
     name: '中山',
     hand: 1,
     grass: '野芝',
@@ -175,6 +183,7 @@ export const VENUES: Record<VenueId, VenueSpec> = {
   },
   chukyo: {
     id: 'chukyo',
+    railCourses: 2,
     name: '中京',
     hand: -1,
     grass: '野芝',
@@ -192,6 +201,7 @@ export const VENUES: Record<VenueId, VenueSpec> = {
   },
   kyoto: {
     id: 'kyoto',
+    railCourses: 4,
     name: '京都',
     hand: 1,
     grass: '野芝',
@@ -230,6 +240,7 @@ export const VENUES: Record<VenueId, VenueSpec> = {
   },
   hanshin: {
     id: 'hanshin',
+    railCourses: 2,
     name: '阪神',
     hand: 1,
     grass: '野芝',
@@ -266,6 +277,7 @@ export const VENUES: Record<VenueId, VenueSpec> = {
   },
   kokura: {
     id: 'kokura',
+    railCourses: 3,
     name: '小倉',
     hand: 1,
     grass: '野芝',
