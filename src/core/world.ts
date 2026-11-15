@@ -17,6 +17,7 @@ import { type ClassId, type RaceTerms, earningsAdd, prizeFor } from './raceclass
 import { MAIDEN3_LAST_WEEK, venueOfWeek } from './program';
 import { type TrackStates, advanceTracks, initialTracks } from './weather';
 import { type JockeyTable, initialJockeyTable } from './jockey';
+import { type Broodmare, FOUNDERS, type Genes, type Pedigree, type Stallion, activeStud, assignPedigree, breedingValue, inheritGrowth, phenotype, planCrop, promoteStallions } from './pedigree';
 import { Rng } from './rng';
 
 export const WEEKS_PER_YEAR = 52;
@@ -121,11 +122,13 @@ export interface WorldHorse extends Horse {
   retireReason?: string;
   /** 収得賞金（万円）。所属クラスを決める（raceclass.ts）。第5段階から */
   earnings: number;
+  /** 血統（父・母・母父・父の系統）。第12段階から */
+  ped?: Pedigree;
 }
 
 export interface World {
-  /** 2：生涯の状態（life）を追加、3：収得賞金・クラス（第5段階）、4：馬場の状態（第7段階）、5：騎手の成績（第9段階） */
-  schema: 5;
+  /** 2：生涯の状態（life）を追加、3：収得賞金・クラス（第5段階）、4：馬場の状態（第7段階）、5：騎手の成績（第9段階）、6：血統・種牡馬（第12段階） */
+  schema: 6;
   date: GameDate;
   /** これまでに開いた開催日の数 */
   meetings: number;
@@ -134,6 +137,8 @@ export interface World {
   tracks: TrackStates;
   /** 騎手の成績（第9段階） */
   jockeys: JockeyTable;
+  /** 種牡馬（第12段階） */
+  stud: Stallion[];
 }
 
 export function ageOf(h: Pick<WorldHorse, 'birthYear'>, date: GameDate): number {
@@ -150,15 +155,25 @@ const NAME_B = ['ライト', 'ノート', 'ステップ', 'ウェーブ', 'ク�
 const GRADES: Grade[] = ['A', 'B', 'C', 'D'];
 const clampi = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, Math.round(v)));
 
-function generateHorse(rng: Rng, id: string, name: string, forcedAge?: number): Horse {
+/**
+ * 馬を1頭作る。mid（両親の遺伝的な値の中間の、平均からのずれ）があるときは、その分だけ中心をずらす（第12段階）。
+ * 個体差の幅は少し狭めて（0.93倍。距離は 0.9倍）、全体のばらつきが血統のないときと同じになるようにする。
+ */
+function generateHorse(rng: Rng, id: string, name: string, forcedAge?: number, mid?: Genes): Horse {
+  // 個体差（平均 m・標準偏差 sd）に、血統のずれを加える
+  const draw = (m: number, sd: number, key: keyof Genes, keep = 0.93) => {
+    const v = rng.normal(m, sd);
+    return mid ? m + keep * (v - m) + mid[key] : v;
+  };
   const sexR = rng.next();
   const sex: Horse['sex'] = forcedAge === 2 ? (sexR < 0.52 ? '牡' : '牝') : sexR < 0.55 ? '牡' : sexR < 0.9 ? '牝' : 'セ';
   const age = forcedAge ?? rng.int(2, 7);
-  const best = clampi(rng.normal(1750, 380), 1000, 3200);
+  const best = clampi(draw(1750, 380, 'distance', 0.9), 1000, 3200);
   const longer = (best - 1750) / 380;
   const style: RunningStyle = rng.pick(['nige', 'senko', 'senko', 'sashi', 'sashi', 'oikomi'] as RunningStyle[]);
   const coat = rng.pick(COATS);
-  const dirtType = rng.chance(0.35);
+  // ダート向きの割合：両親がダート向きなら高くなる
+  const dirtType = rng.chance(mid ? Math.max(0.03, Math.min(0.97, 0.35 + 0.5 * mid.surface)) : 0.35);
   const grade = (bias: number): Grade => GRADES[Math.max(0, Math.min(3, Math.round(1.4 + bias + rng.normal(0, 0.8))))];
   const h: Horse = {
     id,
@@ -169,12 +184,12 @@ function generateHorse(rng: Rng, id: string, name: string, forcedAge?: number): 
     coat: coat.name,
     trainer: rng.pick(TRAINERS),
     // 能力の分布は既存の36頭よりやや低め（36頭は各世代の上位馬という位置づけ）
-    speed: clampi(rng.normal(74 - longer * 2, 5), 58, 90),
-    stamina: clampi(rng.normal(72 + longer * 5, 6), 50, 92),
-    accel: clampi(rng.normal(73, 6), 52, 92),
+    speed: clampi(draw(74 - longer * 2, 5, 'speed'), 58, 90),
+    stamina: clampi(draw(72 + longer * 5, 6, 'stamina'), 50, 92),
+    accel: clampi(draw(73, 6, 'accel'), 52, 92),
     start: clampi(rng.normal(70, 8), 45, 92),
-    temper: clampi(rng.normal(68, 10), 40, 95),
-    power: clampi(rng.normal(dirtType ? 76 : 62, 9), 40, 95),
+    temper: clampi(draw(68, 10, 'temper'), 40, 95),
+    power: clampi(draw(dirtType ? 76 : 62, 9, 'power'), 40, 95),
     style,
     bestDistance: Math.round(best / 100) * 100,
     turf: grade(dirtType ? 1.2 : -0.9),
@@ -182,7 +197,10 @@ function generateHorse(rng: Rng, id: string, name: string, forcedAge?: number): 
     heavy: grade(0),
     note: '',
   };
-  return { ...h, ...generateExtended(h, id) };
+  const ext = generateExtended(h, id);
+  // 成長型：両親の傾向で早熟・晩成の割合が変わる
+  if (mid) ext.growthType = inheritGrowth(new Rng(`growth:${id}`), mid.growth);
+  return { ...h, ...ext };
 }
 
 /** 重ならない馬名を作る（既存の馬名と、記録に残っている馬名を避ける） */
@@ -228,7 +246,9 @@ export function createWorld(extra = 664): World {
     if (!name) break;
     horses.push(toWorldHorse(generateHorse(rng, `g${String(horses.length).padStart(4, '0')}`, name), date, true));
   }
-  return { schema: 5, date, meetings: 0, horses: assignInitialClasses(horses, date), tracks: initialTracks(), jockeys: initialJockeyTable() };
+  // 血統：ゲーム開始時の馬には、あとから父・母・母父を付ける（能力は変えない）
+  const withPed = horses.map((h) => ({ ...h, ped: assignPedigree(h, h.life.pot) }));
+  return { schema: 6, date, meetings: 0, horses: assignInitialClasses(withPed, date), tracks: initialTracks(), jockeys: initialJockeyTable(), stud: FOUNDERS };
 }
 
 /** 能力の総合点（初期のクラス分けの順位づけに使う） */
@@ -289,7 +309,7 @@ export function earningsFromWins(wins: number): number {
 
 /** 生涯の状態がない古い競馬界（schema 1）を移行する（今の能力を現在の値とし、上限を逆算） */
 export function upgradeWorld(w: World | (Omit<World, 'schema'> & { schema: number })): World {
-  if (w.schema === 5) return w as World;
+  if (w.schema === 6) return w as World;
   let horses = (w.horses as (Omit<WorldHorse, 'life' | 'earnings'> & { life?: Life; earnings?: number })[]).map((h) => ({
     ...h,
     life: h.life ?? initLife(h, bioAge(h.birthYear, w.date), h.id),
@@ -307,7 +327,9 @@ export function upgradeWorld(w: World | (Omit<World, 'schema'> & { schema: numbe
   }
   // 馬場の状態（schema 4）：乾いた状態から始める
   // 騎手の成績（schema 5）：0 から数える
-  return { ...(w as World), schema: 5, horses, tracks: (w as Partial<World>).tracks ?? initialTracks(), jockeys: (w as Partial<World>).jockeys ?? initialJockeyTable() };
+  // 血統（schema 6）：今いる馬に父・母・母父を付ける（能力は変えない）。種牡馬は、はじめからいる24頭
+  horses = horses.map((h) => (h.ped ? h : { ...h, ped: assignPedigree(h, h.life.pot) }));
+  return { ...(w as World), schema: 6, stud: (w as Partial<World>).stud ?? FOUNDERS, horses, tracks: (w as Partial<World>).tracks ?? initialTracks(), jockeys: (w as Partial<World>).jockeys ?? initialJockeyTable() };
 }
 
 // ---------------------------------------------------------------- 進行
@@ -353,14 +375,15 @@ export function advanceWeek(world: World): World {
     const cur = currentAbilities(h, life, age);
     return { ...h, ...cur, life };
   });
-  if (date.week === 1) horses = yearStart(horses, date);
+  let stud = world.stud ?? FOUNDERS;
+  if (date.week === 1) ({ horses, stud } = yearStart(horses, date, stud));
   // 天候と馬場：前の開催日から今度の開催日の朝まで（全場）。今週の開催場は開催日数・使用コースを進める
   const tracks = advanceTracks(world.tracks ?? initialTracks(), world.date, date, venueOfWeek(date.week));
   if (date.week === MAIDEN3_LAST_WEEK + 1) horses = maidenCutoff(horses, date);
   // 年明け：騎手の今年の成績を 0 に戻す
   let jockeys = world.jockeys ?? initialJockeyTable();
   if (date.week === 1) jockeys = Object.fromEntries(Object.entries(jockeys).map(([k, v]) => [k, { ...v, yRides: 0, yWins: 0 }]));
-  return { ...world, date, meetings: world.meetings + 1, horses, tracks, jockeys };
+  return { ...world, date, meetings: world.meetings + 1, horses, tracks, jockeys, stud };
 }
 
 /**
@@ -376,7 +399,7 @@ function maidenCutoff(horses: WorldHorse[], date: GameDate): WorldHorse[] {
 }
 
 /** 年明け：引退の判断と、2歳の新しい世代 */
-function yearStart(horses: WorldHorse[], date: GameDate): WorldHorse[] {
+function yearStart(horses: WorldHorse[], date: GameDate, studIn: Stallion[]): { horses: WorldHorse[]; stud: Stallion[] } {
   const out = horses.map((h) => {
     if (h.status !== 'active') return h;
     const age = ageOf(h, date);
@@ -393,11 +416,22 @@ function yearStart(horses: WorldHorse[], date: GameDate): WorldHorse[] {
   const crop = Math.max(40, TARGET_ACTIVE - active);
   const rng = new Rng(`crop:${date.year}`);
   const used = new Set(out.map((h) => h.name));
+  // 種牡馬：この年に引退した牡馬のうち成績のよい馬が加わり、年を取った種牡馬は引退する（少なくとも10頭は残す）
+  const retiring = out.filter((h) => h.status === 'retired' && h.retiredAt?.year === date.year && h.retiredAt.week === date.week);
+  let stud = [...studIn, ...promoteStallions(retiring, studIn, date.year)];
+  const still = stud.filter((s) => s.until >= date.year);
+  if (still.length >= 10) stud = still;
+  // 繁殖牝馬：引退した牝馬（記録に残っている馬）。成績のよかった馬ほど多く子を出す
+  const mares: Broodmare[] = out
+    .filter((h) => h.status === 'retired' && h.sex === '牝')
+    .map((h) => ({ name: h.name, ...(h.ped ? { sire: h.ped.s } : {}), genes: breedingValue(phenotype(h, h.life.pot)), weight: 1 + h.earnings / 800 }));
+  const matings = planCrop(new Rng(`mating:${date.year}`), crop, activeStud(stud, date.year), mares);
   for (let i = 0; i < crop; i++) {
     const name = makeName(rng, used);
     if (!name) break;
     const id = `y${date.year}-${String(i).padStart(3, '0')}`;
-    const foal = toWorldHorse(generateHorse(rng, id, name, 2), date, true);
+    const foal = toWorldHorse(generateHorse(rng, id, name, 2, matings[i].mid), date, true);
+    foal.ped = matings[i].ped;
     // 入厩したばかりの2歳馬は、まだ鍛えられていない（鍛え具合が低く、仕上がりも緩い）
     foal.life = { ...foal.life, dev: Object.fromEntries(GROWTH_KEYS.map((k) => [k, 0.35])) as Life['pot'], fitness: 30 };
     out.push({ ...foal, ...currentAbilities(foal, foal.life, bioAge(foal.birthYear, date)) });
@@ -412,9 +446,9 @@ function yearStart(horses: WorldHorse[], date: GameDate): WorldHorse[] {
         .slice(0, retired.length - RETIRED_KEEP)
         .map((h) => h.id),
     );
-    return out.filter((h) => !drop.has(h.id));
+    return { horses: out.filter((h) => !drop.has(h.id)), stud };
   }
-  return out;
+  return { horses: out, stud };
 }
 
 export interface RaceResultForWorld {

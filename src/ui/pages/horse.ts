@@ -1,3 +1,4 @@
+import { pedigreeSection } from './sire';
 import { bodyText } from '../../core/bodyweight';
 import { JOCKEY_BY_NAME } from '../../core/jockey';
 import { jockeyLink } from './jockey';
@@ -194,6 +195,7 @@ export function horsePage(horseId: string): Page {
             <p class="muted" style="font-size:.82rem">脚質の目安 — 逃げ：先頭でレースを進める／先行：前の方につける／差し：中団から伸びる／追込：後方から一気に追い込む。</p>
           </section>
         </div>
+        ${pedigreeSection(wh?.ped)}
         ${wh ? lifeSection(wh, store.state.world.date) : ''}
         <section class="card" style="margin-top:12px" aria-labelledby="hist-h"><h2 id="hist-h">競走成績（直近10走）</h2>
           ${
