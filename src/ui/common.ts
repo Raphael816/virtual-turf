@@ -3,6 +3,7 @@ import { type RaceRuntime, type RaceStatus, STATUS_LABEL, raceStatus } from '../
 import { GOING_LABEL, SURFACE_LABEL, TIME_LABEL, WEATHER_LABEL, courseShort } from '../core/sim';
 import type { Horse } from '../data/roster';
 import { type RunRecord, dateLabel, findHorse } from '../core/world';
+import { MENU_BY_ID, type MenuId } from '../core/training';
 import { store } from './store';
 import { countdown, esc } from './util';
 
@@ -105,4 +106,12 @@ export function intervalText(runs: RunRecord[]): string {
   const weeks = (d.year - prev.y) * 52 + (d.week - prev.w);
   if (weeks >= 10) return `休み明け（${weeks}週）`;
   return weeks <= 1 ? '連闘' : `中${weeks - 1}週`;
+}
+
+/** 直近の調教（評価のついたもの）。例「坂路B」 */
+export function lastWorkText(horseId: string): string {
+  const h = findHorse(store.state.world, horseId);
+  const r = h?.life.train?.find((x) => x.e);
+  if (!r) return '';
+  return `${MENU_BY_ID[r.m as MenuId]?.label ?? r.m}${r.e}`;
 }

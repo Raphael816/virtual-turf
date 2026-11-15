@@ -2,7 +2,8 @@ import { raceStatus } from '../../core/raceflow';
 import { HORSE_BY_ID, STYLE_LABEL } from '../../data/roster';
 import { type DistanceAptitude, GROWTH_LABEL, distanceFit, gradeOf, profileOf } from '../../core/ability';
 import { type WorldHorse, ageOf, findHorse, formOf } from '../../core/world';
-import { GROWTH_KEYS, INJURY_LABEL, bioAge, conditionLabel, maturity } from '../../core/lifecycle';
+import { DEV_DEFAULT, GROWTH_KEYS, INJURY_LABEL, bioAge, conditionLabel, maturity } from '../../core/lifecycle';
+import { EVAL_LABEL, MENU_BY_ID, type MenuId } from '../../core/training';
 import { formatTime } from '../../core/sim';
 import { type Page, conditionText, raceTitle, surfaceChip } from '../common';
 import { store } from '../store';
@@ -77,13 +78,37 @@ function lifeSection(h: WorldHorse, date: { year: number; week: number }): strin
           <tr><th>身体的疲労</th><td>${bar(f.fatigue, 30)}</td></tr>
           <tr><th>精神的疲労</th><td>${bar(f.mental, 40)}</td></tr>
           <tr><th>故障</th><td>${inj ? `<b class="neg">${esc(inj.name)}（${INJURY_LABEL[inj.severity]}）</b> 復帰まで約${inj.weeksLeft}週` : 'なし'}</td></tr>
+          <tr><th>仕上がり</th><td>${bar(h.life.fitness ?? 50, 101)}</td></tr>
           <tr><th>成長の段階</th><td><b>${stage}</b>（成長型：${{ early: '早熟', normal: '普通', late: '晩成' }[h.growthType ?? 'normal']}）</td></tr>
         </tbody></table>
         <p class="muted" style="font-size:.8rem">疲労はレースで増え、休養で抜けます（1600mで約5週）。疲労が残っている馬は出走を見送ります。調子には周期的な波があり、疲労・休み明けでも下がります。</p>
       </div>
       <div>${growthChart(h, age)}</div>
     </div>
+    <h3 style="margin-top:12px">調教</h3>
+    <div class="grid grid-2">
+      <div>${trainTable(h)}</div>
+      <div>
+        <table class="table"><caption class="sr-only">鍛え具合</caption><tbody>
+          ${GROWTH_KEYS.map((k) => `<tr><th>${{ speed: 'スピード', stamina: 'スタミナ', accel: '瞬発力', sustain: '持続力', power: 'パワー' }[k]}</th><td>${bar((h.life.dev?.[k] ?? DEV_DEFAULT) * 100, 101)}</td></tr>`).join('')}
+        </tbody></table>
+        <p class="muted" style="font-size:.8rem">鍛え具合：調教で上がり、鍛えないと少しずつ落ちます。能力への影響は成長曲線の −3%〜＋2%（上限に近いほど伸びにくい）。</p>
+      </div>
+    </div>
   </section>`;
+}
+
+function trainTable(h: WorldHorse): string {
+  const rows = h.life.train ?? [];
+  if (!rows.length) return '<p class="muted">調教の記録はまだありません。</p>';
+  return `<div class="table-wrap"><table class="table"><caption class="sr-only">調教履歴</caption>
+    <thead><tr><th>日付</th><th>メニュー</th><th>評価</th></tr></thead>
+    <tbody>${rows
+      .map((r) => {
+        const m = MENU_BY_ID[r.m as MenuId];
+        return `<tr><td class="tnum">${r.y}年${r.w}週</td><td title="${esc(m?.description ?? '')}">${esc(m?.label ?? r.m)}</td><td>${r.e ? `<b>${r.e}</b> <span class="muted" style="font-size:.8rem">${EVAL_LABEL[r.e]}</span>` : '—'}</td></tr>`;
+      })
+      .join('')}</tbody></table></div>`;
 }
 
 const aptRow = (label: string, v: number, help: string) =>
