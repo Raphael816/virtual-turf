@@ -2,6 +2,7 @@
  * レース詳細・観戦画面：映像、出馬表、オッズ、投票、実況、結果を1画面で扱う。
  * スマートフォンでは映像の下をタブで切り替え、PC では右側に投票パネルを常時表示する。
  */
+import { jockeyLink } from './jockey';
 import { BET_TYPES, BET_TYPE_BY_ID, type BetTypeId, parseKey } from '../../core/bettypes';
 import { type CommentaryLine, buildCommentary } from '../../core/commentary';
 import { runRace, verifyRace } from '../../core/meeting';
@@ -133,7 +134,7 @@ export function racePage(raceId: string): Page {
             const surf = gradeOf(card.conditions.surface === 'turf' ? profileOf(h).apt.turf : profileOf(h).apt.dirt);
             return `<tr class="${selection.includes(e.number) ? 'is-selected' : ''}">
               <td>${numBadge(e.number, e.frame, 'lg')}</td>
-              <td class="entry-name"><a href="#/horse/${h.id}">${esc(h.name)}</a><div class="entry-sub">${h.sex}${h.age}・${esc(e.jockey)}・${intervalText(recentRuns(e, card.id), isFirstRun(e, card.id))}${lastWorkText(e.horseId) ? `・調教 ${lastWorkText(e.horseId)}` : ''}</div></td>
+              <td class="entry-name"><a href="#/horse/${h.id}">${esc(h.name)}</a><div class="entry-sub">${h.sex}${h.age}・${jockeyLink(e.jockey, e.ride?.id, e.ride?.mark)}${e.ride && Math.abs(e.ride.bonus) >= 3 ? `<span title="この条件・この馬との相性による、騎手の技術の上下">（${e.ride.bonus > 0 ? '好相性' : '相性△'}）</span>` : ''}・${intervalText(recentRuns(e, card.id), isFirstRun(e, card.id))}${lastWorkText(e.horseId) ? `・調教 ${lastWorkText(e.horseId)}` : ''}</div></td>
               <td class="r tnum">${kgText(e.weight)}</td>
               <td>${formBadges(recentRuns(e, card.id), isFirstRun(e, card.id))}</td>
               <td class="hide-sm">${STYLE_LABEL[h.style]}</td>
@@ -285,7 +286,7 @@ export function racePage(raceId: string): Page {
         const e = card.entries[i];
         const h = horseOf(e);
         return `<tr><td><b>${rank + 1}</b></td><td>${numBadge(e.number, e.frame)}</td>
-          <td class="entry-name"><a href="#/horse/${h.id}">${esc(h.name)}</a><div class="entry-sub">${esc(e.jockey)}・${STYLE_LABEL[h.style]}</div></td>
+          <td class="entry-name"><a href="#/horse/${h.id}">${esc(h.name)}</a><div class="entry-sub">${jockeyLink(e.jockey, e.ride?.id, e.ride?.mark)}・${STYLE_LABEL[h.style]}</div></td>
           <td class="tnum">${formatTime(res.finishTimes[i])}</td><td class="tnum">${res.margins[i]}</td>
           <td class="r tnum hide-sm">${res.last3F[i].toFixed(1)}</td>
           <td class="r tnum">${winOdds ? oddsText(winOdds, 'win', String(e.number)) : '—'}</td>

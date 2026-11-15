@@ -1,3 +1,5 @@
+import { JOCKEY_BY_NAME } from '../../core/jockey';
+import { jockeyLink } from './jockey';
 import { raceStatus } from '../../core/raceflow';
 import { HORSE_BY_ID, STYLE_LABEL } from '../../data/roster';
 import { type DistanceAptitude, GROWTH_LABEL, distanceFit, gradeOf, profileOf } from '../../core/ability';
@@ -202,7 +204,7 @@ export function horsePage(horseId: string): Page {
                     .map(
                       (r) => `<tr><td class="tnum">${r.y}年${r.w}週</td><td><a href="#/race/${encodeURIComponent(r.r)}">${esc(r.n)}</a></td><td>${r.k ? CLASS_SHORT[r.k] : '—'}</td><td>${esc(r.c)}</td><td>${esc(r.g)}</td>
                         <td class="r tnum">${r.f}</td><td class="r tnum">${r.no}</td><td class="r"><b>${r.rk}</b></td><td class="r tnum">${kgText(r.kg)}</td><td class="r tnum">${formatTime(r.t)}</td><td>${esc(r.m || '—')}</td>
-                        <td class="r tnum">${r.l3.toFixed(1)}</td><td class="tnum">${esc(r.p)}</td><td>${esc(r.j)}</td><td class="r tnum">${r.pop ?? '—'}</td></tr>`,
+                        <td class="r tnum">${r.l3.toFixed(1)}</td><td class="tnum">${esc(r.p)}</td><td>${jockeyLink(r.j, JOCKEY_BY_NAME.get(r.j)?.id)}</td><td class="r tnum">${r.pop ?? '—'}</td></tr>`,
                     )
                     .join('')}</tbody></table></div>
                  <p class="muted" style="font-size:.8rem">画面を閉じていた間の開催日の成績（観戦しなかったレース）には、人気・オッズがありません。</p>`

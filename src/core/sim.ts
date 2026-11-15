@@ -8,6 +8,7 @@ import type { Horse, RunningStyle } from '../data/roster';
 import { type AptitudeBreakdown, type ExtendedAbilities, profileOf, raceAbility } from './ability';
 import { Rng } from './rng';
 import { weightEffect } from './raceclass';
+import { SKILL_NEUTRAL, type Skills } from './jockey';
 import { VENUES, type VenueId } from '../data/venues';
 import { type Surface, cornersOnRoute, courseFor, courseTraits, curvatureAt, gradeAt, raceU } from './track';
 
@@ -16,7 +17,7 @@ import { type Surface, cornersOnRoute, courseFor, courseTraits, curvatureAt, gra
  * 3.1.0: 出走時点の状態（調子・疲労・精神的疲労）を計算に入れる
  * 3.0.0: 能力・適性を拡張（持続力・操縦性・健康・距離の幅・回り・坂・小回り・直線・季節）、脚質の位置取りを展開で変える
  */
-export const ENGINE_VERSION = 'sim-4.0.0';
+export const ENGINE_VERSION = 'sim-4.1.0';
 
 export type Weather = 'sunny' | 'cloudy' | 'drizzle' | 'rain' | 'lightsnow' | 'snow';
 export type Going = 'good' | 'yielding' | 'soft' | 'heavy';
@@ -66,6 +67,8 @@ export interface SimRunner {
   number: number;
   /** 負担重量 (kg)。ない場合は重量の影響なし（古い出走表） */
   weight?: number;
+  /** その日の騎手の技術（0〜1。jockey.ts）。ない場合は騎手の影響なし */
+  rider?: Skills;
 }
 
 export interface SimOptions {
@@ -237,6 +240,12 @@ export const TUNE = {
   fadeThr: 1,
   drainGap: 0.05,
   condClip: 3,
+  // 第9段階（騎手）
+  rideSd: 0.06,
+  condWithRider: 0.9,
+  driveKick: 0.007,
+  cornerLane: 0.3,
+  paceSave: 0.07,
   fight: 0.02,
 };
 /**
@@ -345,7 +354,12 @@ export function simulateRace(cond: RaceConditions, runners: SimRunner[], seed: s
     const ab = raceAbility(prof, { surface: cond.surface, distance: D, goingIndex: g, course: traits, month: cond.month });
     // 当日の出来（調子とは別の、その日のレースでの能力の出し具合）。第8段階で幅を広げた（TUNE.condScale）
     // 極端に悪い・良い出来は ±condClip σ で頭打ち（大敗が重なりすぎない）
-    const condition = clamp(rng.normal(0, 1), -TUNE.condClip, TUNE.condClip) * ab.conditionSd * TUNE.condScale;
+    // 騎手の技術（基準 SKILL_NEUTRAL との差。上手なら正）。場面ごとに別の技術が効く（jockey.ts）
+    const jk = (k: keyof Skills) => (r.rider ? r.rider[k] - SKILL_NEUTRAL : 0);
+    // 当日の出来（馬）＋騎乗の出来（判断の安定性が低い騎手ほどばらつく）。騎手がいるときは、馬の分の幅を少し狭める（合計の不確実性は同じくらい）
+    const rideSd = r.rider ? TUNE.rideSd * clamp(1 - 2 * jk('steady'), 0.4, 1.8) : 0;
+    const condition =
+      clamp(rng.normal(0, 1), -TUNE.condClip, TUNE.condClip) * ab.conditionSd * TUNE.condScale * (r.rider ? TUNE.condWithRider : 1) + (r.rider ? rng.normal(0, rideSd) : 0);
     const base = (cond.surface === 'turf' ? 17.9 - 0.12 * g : (17.3 + 0.07 * g) * 0.993) * distSpeed * grassSpeed;
     // スピードの差は短距離ほど効く（道中から最高速度に近いペースで流れるため。長距離はスタミナの比重が増す）
     // 能力・適性・当日の出来による速度の差は TUNE.spreadScale 倍にそろえて縮める（第8段階：着差が実際の競馬に近くなるように）
@@ -355,17 +369,21 @@ export function simulateRace(cond: RaceConditions, runners: SimRunner[], seed: s
     // 負担重量（raceclass.ts。1kg ≒ 1馬身の目安）
     const we = weightEffect(r.weight, D);
     const vTop = vTop0 * we.speed;
-    const kakari = rng.chance(ab.kakariProb);
+    // 折り合い：上手な騎手は掛かりにくい
+    const kakari = rng.chance(clamp(ab.kakariProb * (1 - 2 * jk('settle')), 0, 0.9));
     const kakariStart = rng.range(4, 12);
     const kakariDur = rng.range(10, 28) * ab.kakariDuration;
     // ゲートの出のばらつき（第8段階で 0.06 → 0.15 秒。出の速かった馬が先に内へ切れ込める）
-    let startDelay = ab.startDelay + Math.abs(rng.normal(0, TUNE.breakSd));
-    const lateStart = rng.chance(ab.lateStartProb);
+    // スタート技術：反応が速く、出遅れが少ない
+    let startDelay = Math.max(0.05, ab.startDelay - 0.15 * jk('start')) + Math.abs(rng.normal(0, TUNE.breakSd * clamp(1 - 1.5 * jk('start'), 0.5, 1.6)));
+    const lateStart = rng.chance(clamp(ab.lateStartProb * (1 - 2.5 * jk('start')), 0, 0.5));
     if (lateStart) startDelay += rng.range(0.5, 1.0);
     // 仕掛けの地点は騎手の判断でばらつく（第8段階で幅を 40m → TUNE.timingSd に）
-    const spurtDist = (580 + (SPURT_DIST[h.style] - 580) * TUNE.spurtSpread) * clamp(D / 1600, 0.85, 1.2) + rng.normal(0, TUNE.timingSd);
-    const gapFrac = GAP_FRAC[h.style] + rng.normal(0, ab.positionNoise * TUNE.posScale);
-    const kick = (rng.normal(0, TUNE.kickSd) + ab.kick) * TUNE.spreadScale;
+    const spurtDist = (580 + (SPURT_DIST[h.style] - 580) * TUNE.spurtSpread) * clamp(D / 1600, 0.85, 1.2) + rng.normal(0, TUNE.timingSd * clamp(1 - 2 * jk('timing'), 0.4, 1.8));
+    // 位置取り：上手な騎手ほど狙った位置を取れる
+    const gapFrac = GAP_FRAC[h.style] + rng.normal(0, ab.positionNoise * TUNE.posScale * clamp(1 - 2 * jk('position'), 0.4, 1.8));
+    // 追う技術：末脚を伸ばす
+    const kick = (rng.normal(0, TUNE.kickSd) + ab.kick + TUNE.driveKick * jk('drive')) * TUNE.spreadScale;
     return {
       style: h.style,
       vTop,
@@ -388,14 +406,20 @@ export function simulateRace(cond: RaceConditions, runners: SimRunner[], seed: s
       aRun: ab.aRun,
       spurtDrain: ab.spurtDrain,
       fadeThreshold: ab.fadeThreshold,
-      cornerFactor: ab.cornerFactor,
+      // コーナリング：コーナーでの減速を抑え、小さく回る（外を回る距離損が減る）
+      cornerFactor: 1 - (1 - ab.cornerFactor) * clamp(1 - 2 * jk('corner'), 0.3, 1.7),
+      cornerLane: clamp(1 - TUNE.cornerLane * jk('corner'), 0.7, 1.3),
+      // ペース判断：道中で脚を溜める効率
+      paceSave: 1 - TUNE.paceSave * jk('pace'),
+      // 位置取り：外にいるとき、控えて前の馬の後ろへ入る判断の速さ
+      tuck: clamp(1 + 3 * jk('position'), 0.3, 2),
       earlySpeed: ab.earlySpeed,
       /** 逃げ馬がいないために押し出された先頭（自分のペースでゆったり行く） */
       reluctantLead: false,
       // 上り坂での失速の受けやすさ（パワーと坂適性）
       hill: ab.hill,
       // 勝負根性（直線の叩き合いの強さ）：持続力と気性から（0〜1）
-      guts: clamp((prof.sustain * 0.6 + prof.temper * 0.4) / 100, 0, 1),
+      guts: clamp((prof.sustain * 0.6 + prof.temper * 0.4) / 100 + 0.5 * jk('drive'), 0, 1.2),
     };
   });
 
@@ -705,7 +729,7 @@ export function simulateRace(cond: RaceConditions, runners: SimRunner[], seed: s
           }
         }
         // 控える（騎手の判断）：序盤に外にいて内へ入れない、ハナを主張しない馬は、少し速度を落として前の馬の後ろに入る
-        if (!movedIn && xPrev[i] < earlyEnd && lanePrev[i] > 1.2 && p.style !== 'nige' && i !== leader) target *= 1 - TUNE.tuckSlow;
+        if (!movedIn && xPrev[i] < earlyEnd && lanePrev[i] > 1.2 && p.style !== 'nige' && i !== leader) target *= 1 - TUNE.tuckSlow * p.tuck;
       }
 
       // 短距離の終いの失速（全馬に共通）
@@ -757,7 +781,7 @@ export function simulateRace(cond: RaceConditions, runners: SimRunner[], seed: s
       const relaxK = 1 - TUNE.relax * relaxScale * behind;
       // ハナ争い：競り合っている間は消耗が大きい
       const duelK = contested ? TUNE.duelDrain : 1;
-      S[i] = Math.max(0, S[i] - (drainK * ratio ** 4 * goingDrain * draft * hillDrain * sustainK * relaxK * duelK * (kakariActive ? 1.7 : 1) * dt) / p.staminaFactor);
+      S[i] = Math.max(0, S[i] - (drainK * ratio ** 4 * goingDrain * draft * hillDrain * sustainK * relaxK * duelK * (kakariActive ? 1.7 : 1) * (spurting[i] ? 1 : p.paceSave) * dt) / p.staminaFactor);
       if (!flags.fade[i] && S[i] < 0.05 && rem > 200) {
         flags.fade[i] = true;
         events.push({ t, type: 'fade', runner: i });
@@ -774,7 +798,7 @@ export function simulateRace(cond: RaceConditions, runners: SimRunner[], seed: s
       // コーナーで外を回るほど進みが減る（曲率 κ のとき 1/(1+κ·レーン)）
       // 発走直後の 250m は、実際はポケット（コースの外に張り出した直線の発走地点）を走ることが多いので、外を回る距離損を小さくする（近似）
       const chute = clamp(xPrev[i] / 250, 0, 1);
-      const progress = (vEff * dt) / (1 + curvatureAt(course, uNow) * lane[i] * chute);
+      const progress = (vEff * dt) / (1 + curvatureAt(course, uNow) * lane[i] * chute * p.cornerLane);
       laneLoss[i] += vEff * dt - progress;
       x[i] = xPrev[i] + progress;
 
