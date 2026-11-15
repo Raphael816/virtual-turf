@@ -340,9 +340,9 @@ describe('台帳・投票・払戻', () => {
     const book = buildOddsBook(withStakes(emptyPools(), [{ betType: 'win', key: '1', stake: 1000 }]), numbers);
     const r = await placeBet(s, { raceId: 'r', betType: 'win', selection: [1], stake: 100 }, numbers, book, T0, true);
     if (!r.ok) throw new Error(r.message);
-    s = await settleRace(r.state, 'r', { win: { '1': 2 }, place: {}, quinella: {}, exacta: {} }, T0);
+    s = await settleRace(r.state, 'r', { win: { '1': 2 } }, T0);
     const once = s.balance;
-    s = await settleRace(s, 'r', { win: { '1': 2 }, place: {}, quinella: {}, exacta: {} }, T0);
+    s = await settleRace(s, 'r', { win: { '1': 2 } }, T0);
     expect(s.balance).toBe(once);
   });
 

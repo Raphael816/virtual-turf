@@ -3,11 +3,11 @@
  * スマートフォンでは映像の下をタブで切り替え、PC では右側に投票パネルを常時表示する。
  */
 import { jockeyLink } from './jockey';
-import { BET_TYPES, BET_TYPE_BY_ID, type BetTypeId, parseKey } from '../../core/bettypes';
+import { BET_TYPES, BET_TYPE_BY_ID, type BetTypeId, isSold, parseKey } from '../../core/bettypes';
 import { type CommentaryLine, buildCommentary } from '../../core/commentary';
 import { runRace, verifyRace } from '../../core/meeting';
-import { type OddsBook, payout, popularity } from '../../core/pool';
-import { closeRace, currentOddsBook, finishRace } from '../../core/raceflow';
+import { type OddsBook, payout, popularity, rangeOf } from '../../core/pool';
+import { activeCard, closeRace, currentOddsBook, finishRace } from '../../core/raceflow';
 import { activeRestriction } from '../../core/responsible';
 import { analyzeRace } from '../../core/analysis';
 import { bodyText } from '../../core/bodyweight';
@@ -85,6 +85,17 @@ export function racePage(raceId: string): Page {
   const tabs = (): Tab[] => (isWide() ? ['card', 'paper', 'odds', 'feed', 'result'] : ['card', 'paper', 'bet', 'odds', 'feed', 'result']);
 
   // ---- データ ----
+  /** 出走取消・競走除外の馬（締切のときに決まる）を除いた出走表。レースの計算結果の番号は、この出走表の並びに対応する */
+  const run = () => activeCard(card, runtimeOf(card).scratched);
+  const scratched = () => runtimeOf(card).scratched ?? [];
+  const soldTypes = () => BET_TYPES.filter((t) => isSold(t, numbers.length));
+  /** 組合せの表示（枠連は枠の色、それ以外は馬番） */
+  const keyBadges = (t: BetTypeId, k: string) => {
+    const type = BET_TYPE_BY_ID[t];
+    return parseKey(k)
+      .map((n) => (type.frames ? numBadge(n, n) : numBadge(n, card.entries.find((e) => e.number === n)?.frame ?? 1)))
+      .join(type.ordered ? '→' : '-');
+  };
   const probs = () => store.getProbs(card.id);
   const book = (): OddsBook | null => {
     const p = probs();
@@ -93,11 +104,11 @@ export function racePage(raceId: string): Page {
   const ensureResult = (): SimResult | null => {
     // 結果は締切後にだけ計算する（発売中に画面から結果が分からないように）
     if (result || statusOf(card) === 'open') return result;
-    result = runRace(card, card.seed);
-    playback = new Playback(card, result);
+    result = runRace(run(), card.seed);
+    playback = new Playback(run(), result);
     playback.speed = store.prefs.speed;
-    commentary = buildCommentary(card, result);
-    viewer?.setRace(card, result);
+    commentary = buildCommentary(run(), result);
+    viewer?.setRace(run(), result);
     return result;
   };
   const restriction = (): string | null => {
@@ -111,8 +122,8 @@ export function racePage(raceId: string): Page {
   // ---- 部分テンプレート ----
   const oddsText = (b: OddsBook | null, type: BetTypeId, key: string): string => {
     if (!b) return '—';
-    if (type === 'place') {
-      const r = b.placeRange[key];
+    if (type === 'place' || type === 'wide') {
+      const r = rangeOf(b, type, key);
       return r ? `${r[0].toFixed(1)}–${r[1].toFixed(1)}` : '—';
     }
     const o = b.odds[type][key];
@@ -125,11 +136,19 @@ export function racePage(raceId: string): Page {
     return `<span class="odds-state"><i class="dot" aria-hidden="true"></i>確定（締切時点）</span>`;
   };
 
+  const scratchNote = () => {
+    const sc = scratched();
+    if (!sc.length) return '';
+    const names = sc.map((n) => `${n}番 ${esc(horseOf(card.entries.find((e) => e.number === n)!).name)}`).join('・');
+    return `<p class="notice">競走除外：${names}。この馬番を含む組合せは返還しました（枠連は、同じ枠に他の馬がいる場合は返還になりません）。</p>`;
+  };
+
   const cardTab = () => {
     const b = book();
     const pop = b ? popularity(b, 'win') : [];
     const fin = runtimeOf(card).order;
     return `
+      ${scratchNote()}
       <div class="table-wrap"><table class="table">
         <caption class="sr-only">${raceTitle(card)} 出馬表</caption>
         <thead><tr><th>馬番</th><th>馬名・騎手</th><th class="r" title="負担重量 (kg)">斤量</th><th class="r hide-sm" title="馬体重 (kg) と前走からの増減">馬体重</th><th>近走</th><th class="hide-sm">脚質</th><th class="hide-sm">適性</th><th class="r">単勝</th><th class="r">人気</th>${fin ? '<th class="r">着順</th>' : ''}</tr></thead>
@@ -148,7 +167,7 @@ export function racePage(raceId: string): Page {
               <td class="hide-sm"><span class="entry-sub">${card.conditions.surface === 'turf' ? '芝' : 'ダ'}</span> <span class="grade grade-${surf}">${surf}</span> <span class="entry-sub" title="距離適性（このレースの距離 ${card.conditions.distance}m に対して）">距離${distanceMark(profileOf(h).apt.distance, card.conditions.distance)}</span></td>
               <td class="r tnum" data-odds="win:${key}">${oddsText(b, 'win', key)}</td>
               <td class="r tnum" data-pop="${key}">${pop.indexOf(key) >= 0 ? pop.indexOf(key) + 1 : '—'}</td>
-              ${fin ? `<td class="r"><b>${fin.indexOf(e.number) + 1}</b></td>` : ''}
+              ${fin ? `<td class="r"><b>${fin.indexOf(e.number) >= 0 ? (runtimeOf(card).ranks?.[fin.indexOf(e.number)] ?? fin.indexOf(e.number) + 1) : '除外'}</b></td>` : ''}
             </tr>`;
           })
           .join('')}</tbody>
@@ -236,11 +255,9 @@ export function racePage(raceId: string): Page {
     if (!b) return `<p class="loading">オッズを集計しています…</p>`;
     const top = (t: BetTypeId) =>
       popularity(b, t)
-        .slice(0, 12)
+        .slice(0, 10)
         .map((k) => {
-          const parts = parseKey(k);
-          const sep = BET_TYPE_BY_ID[t].ordered ? '→' : '-';
-          return `<li><span>${parts.map((n) => numBadge(n, card.entries.find((e) => e.number === n)!.frame)).join(sep)}</span> <b class="tnum">${oddsText(b, t, k)}</b></li>`;
+          return `<li><span>${keyBadges(t, k)}</span> <b class="tnum">${oddsText(b, t, k)}</b></li>`;
         })
         .join('');
     return `
@@ -257,11 +274,13 @@ export function racePage(raceId: string): Page {
           })
           .join('')}</tbody></table></div>
       <div class="grid grid-2" style="margin-top:12px">
-        <div><h3>馬連 人気上位</h3><ol class="feed" style="max-height:none">${top('quinella')}</ol></div>
-        <div><h3>馬単 人気上位</h3><ol class="feed" style="max-height:none">${top('exacta')}</ol></div>
+        ${soldTypes()
+          .filter((t) => t.picks > 1)
+          .map((t) => `<div><h3>${t.label} 人気上位${t.id === 'wide' ? '（幅）' : ''}</h3><ol class="feed" style="max-height:none">${top(t.id) || '<li class="muted">確定後は「結果」の払戻をご覧ください。</li>'}</ol></div>`)
+          .join('')}
       </div>
-      <p class="muted" style="font-size:.82rem">票数（デモ）: ${BET_TYPES.map((t) => `${t.label} ${coins(b.totals[t.id])}`).join('／')}。
-      オッズ＝票数の合計×(1−控除率)÷その組み合わせの票数。<a href="#/guide">仕組みを詳しく</a></p>`;
+      <p class="muted" style="font-size:.82rem">票数（デモ）: ${soldTypes().map((t) => `${t.label} ${coins(b.totals[t.id])}`).join('／')}。
+      オッズ＝票数の合計×払戻率÷その組み合わせの票数（払戻率は JRA と同じ：単勝・複勝 80%、枠連・馬連・ワイド 77.5%、馬単・3連複 75%、3連単 72.5%）。<a href="#/guide">仕組みを詳しく</a></p>`;
   };
 
   const myTickets = () => {
@@ -277,7 +296,9 @@ export function racePage(raceId: string): Page {
               ? `<span class="chip chip-open">的中 ${coins(t.payout!)}（${t.finalOdds!.toFixed(1)}倍）</span>`
               : t.status === 'refunded'
                 ? '<span class="chip chip-finished">返還</span>'
-                : '<span class="chip chip-finished">不的中</span>';
+                : t.status === 'special'
+                  ? `<span class="chip chip-finished">特払い ${coins(t.payout!)}</span>`
+                  : '<span class="chip chip-finished">不的中</span>';
         return `<li><time>${type.label}</time><span>${t.selection.join(type.ordered ? '→' : '-')}・${coins(t.stake)}コイン ${status}</span></li>`;
       })
       .join('')}</ul>`;
@@ -295,7 +316,18 @@ export function racePage(raceId: string): Page {
     if (restricted) {
       return `${head}<p class="notice">${restricted}</p><p><a href="#/account">設定を確認</a></p><h3>購入した券</h3>${myTickets()}`;
     }
-    const picks = card.entries
+    const frames = [...new Set(card.entries.map((e) => e.frame))];
+    const picks = type.frames
+      ? frames
+          .map((f) => {
+            const cnt = selection.filter((x) => x === f).length;
+            const names = card.entries.filter((e) => e.frame === f).map((e) => `${e.number} ${esc(horseOf(e).name)}`).join('／');
+            return `<button type="button" class="pick" data-pick="${f}" aria-pressed="${cnt > 0}">
+              ${numBadge(f, f)}<span class="nm">${names}</span>${cnt > 1 ? '<span class="pick-order">×2</span>' : ''}<span class="odds"></span>
+            </button>`;
+          })
+          .join('')
+      : card.entries
       .map((e) => {
         const idx = selection.indexOf(e.number);
         const orderBadge = type.ordered && idx >= 0 ? `<span class="pick-order">${idx + 1}着</span>` : '';
@@ -307,11 +339,11 @@ export function racePage(raceId: string): Page {
       })
       .join('');
     return `${head}
-      <div class="seg" role="group" aria-label="券種">${BET_TYPES.map(
+      <div class="seg seg-wrap" role="group" aria-label="券種">${soldTypes().map(
         (t) => `<button type="button" data-type="${t.id}" aria-pressed="${t.id === betType}">${t.label}</button>`,
       ).join('')}</div>
-      <p class="muted" style="font-size:.85rem;margin:8px 0">${type.description}${type.ordered ? '（1着→2着の順に選択）' : ''}</p>
-      <div class="picker" role="group" aria-label="馬を選択">${picks}</div>
+      <p class="muted" style="font-size:.85rem;margin:8px 0">${type.description}${type.ordered ? '（1着から順に選択）' : ''}${type.frames ? '（枠を2つ選択。同じ枠の2頭なら、その枠を2回）' : ''}</p>
+      <div class="picker" role="group" aria-label="${type.frames ? '枠を選択' : '馬を選択'}">${picks}</div>
       <div class="betbar">
         <label class="field" style="margin-bottom:8px"><span>賭け金（100コイン単位）</span>
           <input type="number" inputmode="numeric" min="100" step="100" value="${stake}" data-stake aria-describedby="quote-msg"></label>
@@ -330,7 +362,7 @@ export function racePage(raceId: string): Page {
     if (!b) return '<p class="muted" id="quote-msg">オッズを集計しています…</p>';
     const type = BET_TYPE_BY_ID[betType];
     if (selection.length < type.picks) {
-      return `<p class="muted" id="quote-msg">あと${type.picks - selection.length}頭を選んでください。</p>`;
+      return `<p class="muted" id="quote-msg">あと${type.picks - selection.length}${type.frames ? '枠' : '頭'}を選んでください。</p>`;
     }
     const q = quoteBet(store.state, { raceId: card.id, betType, selection, stake }, numbers, b, store.now(), true);
     const est = q.estPayout ? (q.estPayout[0] === q.estPayout[1] ? coins(q.estPayout[0]) : `${coins(q.estPayout[0])}〜${coins(q.estPayout[1])}`) : '—';
@@ -360,6 +392,7 @@ export function racePage(raceId: string): Page {
     const rt = runtimeOf(card);
     if (!rt.order || !rt.payoutOdds) return '<p class="muted">レース確定後に結果が表示されます。</p>';
     const res = ensureResult()!;
+    const rc = run();
     // 締切後は確定プールから計算されるため、確定オッズ・確定人気になる
     const winOdds = rt.finalPools ? currentOddsBook(store.state, card, probs() ?? store.probsSync(card), store.now()) : null;
     const finalPop = winOdds ? popularity(winOdds, 'win') : [];
@@ -369,18 +402,20 @@ export function racePage(raceId: string): Page {
       const wh = findHorse(store.state.world, id);
       return !!wh && wh.career.starts - (wh.history.some((r) => r.r === card.id) ? 1 : 0) <= 0;
     };
-    const comments = postRaceComments(card, res);
+    const comments = postRaceComments(rc, res);
     const commentHtml = (cs: typeof comments) =>
       cs.map((c) => `<li><b>${c.rank}着 ${c.number}番 ${esc(c.name)}</b>（${esc(c.jockey)} 騎手）<br>「${esc(c.text)}」</li>`).join('');
     const rows = res.order
       .map((i, rank) => {
-        const e = card.entries[i];
+        const e = rc.entries[i];
         const h = horseOf(e);
-        return `<tr><td><b>${rank + 1}</b></td><td class="tnum">${e.frame}</td><td>${numBadge(e.number, e.frame)}</td>
+        const rk = rt.ranks?.[rank] ?? rank + 1;
+        const tied = !!rt.ranks && rank > 0 && rt.ranks[rank] === rt.ranks[rank - 1];
+        return `<tr><td><b>${rk}</b></td><td class="tnum">${e.frame}</td><td>${numBadge(e.number, e.frame)}</td>
           <td class="entry-name"><a href="#/horse/${h.id}">${esc(h.name)}</a></td>
           <td>${h.sex}${h.age}</td><td class="r tnum">${kgText(e.weight)}</td>
           <td>${jockeyLink(e.jockey, e.ride?.id, e.ride?.mark)}</td>
-          <td class="tnum">${formatTime(res.finishTimes[i])}</td><td class="tnum">${res.margins[i]}</td>
+          <td class="tnum">${formatTime(res.finishTimes[i])}</td><td class="tnum">${tied ? '同着' : res.margins[i]}</td>
           <td class="tnum">${res.cornerOrders.map((c) => c.order.indexOf(i) + 1).join('-')}</td>
           <td class="r tnum${l3Best === i ? ' best' : ''}">${res.last3F[i].toFixed(1)}</td>
           <td class="r tnum">${winOdds ? oddsText(winOdds, 'win', String(e.number)) : '—'}</td>
@@ -388,16 +423,18 @@ export function racePage(raceId: string): Page {
           <td class="r tnum">${bodyText(e.body, e.bodyDiff, wasFirstRun(e.horseId))}</td></tr>`;
       })
       .join('');
-    const payouts = BET_TYPES.flatMap((t) =>
-      Object.entries(rt.payoutOdds![t.id]).map(
-        ([k, o]) =>
-          `<tr><td>${t.label}</td><td>${k.replace('>', '→')}</td><td class="r tnum">${coins(payout(100, o))}</td><td class="r tnum">${o.toFixed(1)}倍</td></tr>`,
-      ),
-    ).join('');
+    const payouts = BET_TYPES.flatMap((t) => {
+      if (!isSold(t, numbers.length)) return [];
+      const sp = rt.special?.[t.id];
+      if (sp !== undefined) return [`<tr><td>${t.label}</td><td>的中なし（特払い）</td><td class="r tnum">${coins(payout(100, sp))}</td><td class="r tnum">${sp.toFixed(1)}倍</td></tr>`];
+      return Object.entries(rt.payoutOdds![t.id] ?? {})
+        .sort((a, b) => a[1] - b[1])
+        .map(([k, o]) => `<tr><td>${t.label}</td><td>${keyBadges(t.id, k)}</td><td class="r tnum">${coins(payout(100, o))}</td><td class="r tnum">${o.toFixed(1)}倍</td></tr>`);
+    }).join('');
     const mine = store.state.tickets.filter((t) => t.raceId === card.id);
     const stakeSum = mine.reduce((a, t) => a + t.stake, 0);
     const paySum = mine.reduce((a, t) => a + (t.payout ?? 0), 0);
-    const an = analyzeRace(card, res, finalPop[0] ? Number(finalPop[0]) : undefined);
+    const an = analyzeRace(rc, res, finalPop[0] ? Number(finalPop[0]) : undefined);
     const factorRows = an.rows
       .map(
         (r) => `<tr><td>${r.rank}</td><td>${r.number}</td><td>${esc(r.name)}</td><td>${r.style}${r.actualStyle !== r.style ? `<span class="entry-sub">→${r.actualStyle}</span>` : ''}</td>
@@ -430,7 +467,9 @@ export function racePage(raceId: string): Page {
       <ul class="comments">${commentHtml(comments.slice(0, 3))}</ul>
       ${comments.length > 3 ? `<details><summary>4着以下のコメント</summary><ul class="comments" style="margin-top:8px">${commentHtml(comments.slice(3))}</ul></details>` : ''}
       <p class="muted" style="font-size:.8rem">コメントは、このレースの計算の記録（出遅れ・位置取り・ペース・上がり・馬体重など）から自動で作った架空の談話です。</p>
-      <p class="muted" style="font-size:.85rem">コーナー通過順：${res.cornerOrders.map((c) => `${c.corner}角 ${c.order.map((i) => card.entries[i].number).join('-')}`).join('／')}</p>
+      <p class="muted" style="font-size:.85rem">コーナー通過順：${res.cornerOrders.map((c) => `${c.corner}角 ${c.order.map((i) => rc.entries[i].number).join('-')}`).join('／')}</p>
+      ${scratchNote()}
+      ${rt.ranks ? '<p class="notice notice-info">同着がありました。同着のときは、的中した組合せの数で分け合うため、締切時点のオッズとは違う払戻になります。</p>' : ''}
       <h3>払戻（100コインあたり）</h3>
       <div class="table-wrap"><table class="table"><thead><tr><th>券種</th><th>組番</th><th class="r">払戻</th><th class="r">オッズ</th></tr></thead><tbody>${payouts}</tbody></table></div>
       ${
@@ -525,7 +564,7 @@ export function racePage(raceId: string): Page {
       toast('3D表示を開始できなかったため、2D上空図で表示しています。', 'warn');
     }
     viewer = v;
-    viewer.setRace(card, ensureResult());
+    viewer.setRace(run(), ensureResult());
     viewer.setCamera?.(camera, followIndex);
     resizeObs.disconnect();
     resizeObs.observe(stage);
@@ -537,7 +576,7 @@ export function racePage(raceId: string): Page {
     if (!viewer) return;
     const st = statusOf(card);
     let t = 0;
-    let horses = gateFrames(card);
+    let horses = gateFrames(run());
     if (playback && st !== 'open') {
       t = st === 'finished' ? playback.replayClock(wall) : currentTime();
       t = Math.min(t, playback.duration);
@@ -574,12 +613,12 @@ export function racePage(raceId: string): Page {
       if (final) {
         lower.innerHTML = `<div class="lower-third"><span class="lt-title">確定</span>${result!.order
           .slice(0, 3)
-          .map((i, r) => `<span class="lt-row"><span class="lt-rank">${r + 1}</span>${numBadge(card.entries[i].number, card.entries[i].frame)}<span class="lt-name">${esc(horseOf(card.entries[i]).name)}</span></span>`)
+          .map((i, r) => `<span class="lt-row"><span class="lt-rank">${r + 1}</span>${numBadge(run().entries[i].number, run().entries[i].frame)}<span class="lt-name">${esc(horseOf(run().entries[i]).name)}</span></span>`)
           .join('')}</div>`;
       } else if (rem < 600 && rem > 0) {
         const top = [...horses].sort((a, b) => a.rank - b.rank).slice(0, 3);
         lower.innerHTML = `<div class="lower-third">${top
-          .map((h, r) => `<span class="lt-row"><span class="lt-rank">${r + 1}</span>${numBadge(h.number, h.frame)}<span class="lt-name">${esc(horseOf(card.entries[h.index]).name)}</span></span>`)
+          .map((h, r) => `<span class="lt-row"><span class="lt-rank">${r + 1}</span>${numBadge(h.number, h.frame)}<span class="lt-name">${esc(horseOf(run().entries[h.index]).name)}</span></span>`)
           .join('')}</div>`;
       } else {
         lower.innerHTML = '';
@@ -597,7 +636,7 @@ export function racePage(raceId: string): Page {
       if (live)
         live.textContent = `残り${rem}メートル。${ranked
           .slice(0, 3)
-          .map((h, i) => `${i + 1}番手 ${h.number}番 ${horseOf(card.entries[h.index]).name}`)
+          .map((h, i) => `${i + 1}番手 ${h.number}番 ${horseOf(run().entries[h.index]).name}`)
           .join('、')}`;
     }
     // 実況タブは新しい行があるときだけ更新
@@ -745,15 +784,18 @@ export function racePage(raceId: string): Page {
     }
     const typeBtn = t.closest<HTMLElement>('[data-type]');
     if (typeBtn) {
+      const prev = BET_TYPE_BY_ID[betType];
       betType = typeBtn.dataset.type as BetTypeId;
-      selection = selection.slice(0, BET_TYPE_BY_ID[betType].picks);
+      // 枠連（枠番）と他の券種（馬番）では選ぶものが違うので、切り替えたら選び直す
+      selection = !!prev.frames !== !!BET_TYPE_BY_ID[betType].frames ? [] : selection.slice(0, BET_TYPE_BY_ID[betType].picks);
       return renderPanels();
     }
     const pick = t.closest<HTMLElement>('[data-pick]');
     if (pick) {
       const n = Number(pick.dataset.pick);
       const type = BET_TYPE_BY_ID[betType];
-      if (selection.includes(n)) selection = selection.filter((x) => x !== n);
+      if (type.frames) selection = selection.length >= type.picks ? [n] : [...selection, n];
+      else if (selection.includes(n)) selection = selection.filter((x) => x !== n);
       else if (type.picks === 1) selection = [n];
       else selection = [...selection, n].slice(-type.picks);
       renderPanels();
@@ -805,7 +847,7 @@ export function racePage(raceId: string): Page {
       return;
     }
     if (t.closest('[data-verify]')) {
-      const v = await verifyRace(card, card.seed);
+      const v = await verifyRace(run(), card.seed);
       const official = runtimeOf(card).order!;
       const same = v.order.join('-') === official.join('-');
       verifyHtml = `<p class="${v.hashOk && same ? 'pos' : 'neg'}" style="font-size:.9rem">
