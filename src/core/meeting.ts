@@ -23,7 +23,8 @@ import {
   isOpenClass,
   termsLabel,
 } from './raceclass';
-import { type ProgramAlt, SLOTS, SPECIAL_NAMES, altsFor, stakesOfWeek } from './program';
+import { type ProgramAlt, type ProgramSlot, SLOTS, SPECIAL_NAMES, altsFor, distanceOptions, stakesOfWeek, venueOfWeek } from './program';
+import { VENUES, type Layout, type VenueId } from '../data/venues';
 import { Rng, secureSeed, sha256Hex } from './rng';
 import {
   ENGINE_VERSION,
@@ -261,6 +262,7 @@ function draftProgram(meetingId: string, world: World): Draft[] {
   const used = new Set<string>();
   const names = rng.shuffle([...SPECIAL_NAMES]);
   const avail = eligibleHorses(world);
+  const venue = venueOfWeek(date.week);
   const drafts: Draft[] = [];
 
   // メインレース（重賞）を先に組む（有力馬を先に確保するため）。出走表の順番は 1R〜8R のまま
@@ -281,12 +283,14 @@ function draftProgram(meetingId: string, world: World): Draft[] {
     let filly = false;
     let pool: WorldHorse[] = [];
     let surface = slot.surface;
-    let layout = slot.layout;
-    let distance = rng.pick(slot.distances);
+    const opt = pickDistance(rng, venue, slot);
+    let layout = opt.layout;
+    let distance = opt.d;
     let name = '';
     let rule: WeightRule | undefined;
     let prize: number | undefined;
-    let timeOfDay = slot.timeOfDay;
+    // JRA の平地競走は日中。夏の新潟（競走時間帯の拡大期間）だけ、最後の2レースを薄暮にする
+    let timeOfDay: TimeOfDay = venue === 'niigata' && date.week >= 30 && date.week <= 35 && r >= SLOTS.length - 2 ? 'dusk' : 'day';
     if (stakes) {
       const p = elig(stakes, !!stakes.filly);
       if (p.length >= MIN_FIELD) {
@@ -299,7 +303,7 @@ function draftProgram(meetingId: string, world: World): Draft[] {
         name = stakes.name;
         rule = stakes.rule;
         prize = stakes.prize;
-        timeOfDay = stakes.timeOfDay ?? slot.timeOfDay;
+        timeOfDay = stakes.timeOfDay ?? timeOfDay;
       }
     }
     if (!alt) {
@@ -335,7 +339,7 @@ function draftProgram(meetingId: string, world: World): Draft[] {
     chosen.forEach((h) => used.add(h.id));
     const weightOf = entryWeights(terms, chosen, world, distance);
     const snaps = chosen.map((h) => snapshot(h, date));
-    const conditions: RaceConditions = { surface, ...(surface === 'turf' && layout ? { layout } : {}), distance, ...sky[r], timeOfDay, month };
+    const conditions: RaceConditions = { surface, ...(surface === 'turf' && layout ? { layout } : {}), distance, ...sky[r], timeOfDay, month, venue };
     bySlot.set(r, { name, conditions, terms, entries: toEntries(rng, snaps, (_h, i) => weightOf[i], true) });
   }
   for (let r = 0; r < SLOTS.length; r++) {
@@ -343,6 +347,16 @@ function draftProgram(meetingId: string, world: World): Draft[] {
     if (d) drafts.push(d);
   }
   return drafts;
+}
+
+/** その場の公式の発走距離から、レースの距離の区分に合うものを選ぶ（区分に合う距離がなければ次の区分、それもなければその場のどれか） */
+function pickDistance(rng: Rng, venue: VenueId, slot: ProgramSlot): { d: number; layout?: Layout } {
+  for (const band of slot.bands) {
+    const opts = distanceOptions(venue, slot.surface, band);
+    if (opts.length) return rng.pick(opts);
+  }
+  const v = VENUES[venue];
+  return slot.surface === 'turf' ? rng.pick(v.distances.turf) : { d: rng.pick(v.distances.dirt) };
 }
 
 /** 出走の選ばれやすさの計算に使う、能力の写し（疲労だけ当日の値） */

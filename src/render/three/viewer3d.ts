@@ -13,7 +13,8 @@
 import * as THREE from 'three';
 import type { RaceCard } from '../../core/meeting';
 import { type SimResult, courseShort } from '../../core/sim';
-import { COURSES, type Course, courseFor, pointAt, raceU } from '../../core/track';
+import { type Course, courseFor, pointAt, raceU } from '../../core/track';
+import { DEFAULT_VENUE, type VenueId } from '../../data/venues';
 import { GATE_COLORS } from '../../data/roster';
 import { entryHorse } from '../../core/meeting';
 import type { CameraMode, HorseFrame, RaceViewer } from '../types';
@@ -56,6 +57,7 @@ export interface Viewer3DOptions {
   reducedMotion: boolean;
   onFail: (reason: string) => void;
   onQualityChange?: (label: string) => void;
+  venue?: VenueId;
 }
 
 export function webglAvailable(): boolean {
@@ -87,7 +89,7 @@ export class Viewer3D implements RaceViewer {
   private gate: THREE.Group | null = null;
   private container: HTMLElement | null = null;
   private card: RaceCard | null = null;
-  private course: Course = COURSES.turf;
+  private course: Course = courseFor('turf');
   private level: Level;
   private profile: Profile;
   private pixelRatio: number;
@@ -168,7 +170,7 @@ export class Viewer3D implements RaceViewer {
     });
     container.appendChild(canvas);
 
-    this.env = new Environment(this.scene, this.renderer, { level: this.level, crowd: p.crowd, trees: p.trees, shadows: p.shadows, shadowSize: p.shadowSize });
+    this.env = this.makeEnv(this.opts.venue ?? DEFAULT_VENUE);
     this.dust = new DustSystem(p.dust);
     this.clods = new ClodSystem(p.clods);
     this.prints = new HoofPrints(p.prints);
@@ -191,11 +193,23 @@ export class Viewer3D implements RaceViewer {
     this.opts.onFail(reason);
   }
 
+  private makeEnv(venue: VenueId): Environment {
+    const p = this.profile;
+    return new Environment(this.scene, this.renderer, { level: this.level, crowd: p.crowd, trees: p.trees, shadows: p.shadows, shadowSize: p.shadowSize }, venue);
+  }
+
   setRace(card: RaceCard, _result: SimResult | null): void {
     if (this.card?.id === card.id && this.horses.length) return;
     this.card = card;
     const c = card.conditions;
-    this.course = courseFor(c.surface, c.layout);
+    const venue = c.venue ?? DEFAULT_VENUE;
+    // 競馬場が変わったら、建物・地形を作り直す
+    if (this.env && this.env.venue !== venue) {
+      this.env.detach();
+      this.env = this.makeEnv(venue);
+      this.env.setShadows(this.profile.shadows);
+    }
+    this.course = courseFor(c.surface, c.layout, venue);
     this.horses.forEach((h) => {
       this.scene.remove(h.root);
       h.dispose();

@@ -6,7 +6,7 @@
 import { type RaceCard, entryHorse } from './meeting';
 import { Rng } from './rng';
 import { type SimResult, formatTime, marginText } from './sim';
-import { cornersOnRoute, COURSES } from './track';
+import { cornersOnRoute, courseFor } from './track';
 
 export interface CommentaryLine {
   t: number;
@@ -85,7 +85,7 @@ export function buildCommentary(card: RaceCard, res: SimResult): CommentaryLine[
   }
 
   // コーナー（3角・4角）での隊列
-  const course = COURSES[card.conditions.surface];
+  const course = courseFor(card.conditions.surface, card.conditions.layout, card.conditions.venue);
   for (const c of cornersOnRoute(course, D)) {
     if (c.corner < 3) continue;
     const t = leaderReaches(c.at);

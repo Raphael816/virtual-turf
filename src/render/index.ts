@@ -1,3 +1,4 @@
+import type { VenueId } from '../data/venues';
 import type { RaceViewer } from './types';
 import { Viewer2D } from './viewer2d';
 
@@ -11,6 +12,8 @@ export interface ViewerHooks {
   /** 3D の描画を続けられなくなったとき（呼び出し側で2Dに切り替える） */
   onFail: (reason: string) => void;
   onQualityChange?: (label: string) => void;
+  /** 最初に表示する競馬場（3Dの建物・地形を先にその場で作る） */
+  venue?: VenueId;
 }
 
 /**
@@ -28,6 +31,7 @@ export async function createViewer(prefs: ViewerPrefs, hooks: ViewerHooks): Prom
           reducedMotion: prefs.reducedMotion,
           onFail: hooks.onFail,
           onQualityChange: hooks.onQualityChange,
+          venue: hooks.venue,
         });
       }
     } catch (e) {
