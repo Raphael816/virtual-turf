@@ -11,9 +11,10 @@ import { type Surface, cornersOnRoute, courseFor, courseTraits, curvatureAt, gra
 
 /**
  * 2.0.0: 中山を参考にした右回りのコース・起伏（坂）の影響を導入
+ * 3.1.0: 出走時点の状態（調子・疲労・精神的疲労）を計算に入れる
  * 3.0.0: 能力・適性を拡張（持続力・操縦性・健康・距離の幅・回り・坂・小回り・直線・季節）、脚質の位置取りを展開で変える
  */
-export const ENGINE_VERSION = 'sim-3.0.0';
+export const ENGINE_VERSION = 'sim-3.1.0';
 
 export type Weather = 'sunny' | 'cloudy' | 'drizzle' | 'rain';
 export type Going = 'good' | 'yielding' | 'soft' | 'heavy';

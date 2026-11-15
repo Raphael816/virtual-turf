@@ -22,6 +22,7 @@ import {
   conditionText,
   formBadges,
   horseOf,
+  intervalText,
   recentRuns,
   raceTitle,
   runtimeOf,
@@ -127,7 +128,7 @@ export function racePage(raceId: string): Page {
             const surf = gradeOf(card.conditions.surface === 'turf' ? profileOf(h).apt.turf : profileOf(h).apt.dirt);
             return `<tr class="${selection.includes(e.number) ? 'is-selected' : ''}">
               <td>${numBadge(e.number, e.frame, 'lg')}</td>
-              <td class="entry-name"><a href="#/horse/${h.id}">${esc(h.name)}</a><div class="entry-sub">${h.sex}${h.age}・${esc(e.jockey)}・${h.coat}</div></td>
+              <td class="entry-name"><a href="#/horse/${h.id}">${esc(h.name)}</a><div class="entry-sub">${h.sex}${h.age}・${esc(e.jockey)}・${intervalText(recentRuns(e, card.id))}</div></td>
               <td>${formBadges(recentRuns(e, card.id))}</td>
               <td class="hide-sm">${STYLE_LABEL[h.style]}</td>
               <td class="hide-sm"><span class="entry-sub">${card.conditions.surface === 'turf' ? '芝' : 'ダ'}</span> <span class="grade grade-${surf}">${surf}</span> <span class="entry-sub" title="距離適性（このレースの距離 ${card.conditions.distance}m に対して）">距離${distanceMark(profileOf(h).apt.distance, card.conditions.distance)}</span></td>

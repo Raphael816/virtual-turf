@@ -15,6 +15,7 @@
  * 速度の補正は m/s。基準の最高速度は芝良で約17.9m/s（1ハロン約11.2秒）。0.1m/s は1600mで約0.5秒（約3馬身）の差。
  */
 import type { Grade, Horse } from '../data/roster';
+import type { RaceForm } from './lifecycle';
 import { Rng } from './rng';
 
 export type GrowthType = 'early' | 'normal' | 'late';
@@ -48,6 +49,7 @@ export interface Aptitudes {
 
 /** レースの計算に使う、能力と適性のすべて */
 export interface HorseProfile {
+  form?: RaceForm;
   speed: number;
   stamina: number;
   /** 瞬発力（データ上の名前は accel） */
@@ -71,6 +73,8 @@ export interface ExtendedAbilities {
   growth?: number;
   growthType?: GrowthType;
   apt?: Partial<Aptitudes>;
+  /** 出走時点の状態（調子・疲労・精神的疲労）。第3段階 */
+  form?: RaceForm;
 }
 
 const GRADE_NUM: Record<Grade, number> = { A: 85, B: 65, C: 45, D: 25 };
@@ -97,6 +101,7 @@ export function profileOf(h: Horse & ExtendedAbilities): HorseProfile {
     health: h.health ?? 65,
     growth: h.growth ?? 60,
     growthType: h.growthType ?? 'normal',
+    form: h.form,
     apt: {
       turf: a.turf ?? GRADE_NUM[h.turf],
       dirt: a.dirt ?? GRADE_NUM[h.dirt],
@@ -117,7 +122,7 @@ export function profileOf(h: Horse & ExtendedAbilities): HorseProfile {
  * 能力の個体差（追加の能力・適性）を決まった乱数で作る。既存の能力と相関を持たせる。
  * 例：持続力はスタミナと瞬発力の中間に近い、操縦性は気性と相関、坂適性はパワーと相関
  */
-export function generateExtended(h: Horse, seed: string): Required<Omit<ExtendedAbilities, 'apt'>> & { apt: Aptitudes } {
+export function generateExtended(h: Horse, seed: string): Required<Omit<ExtendedAbilities, 'apt' | 'form'>> & { apt: Aptitudes } {
   const rng = new Rng(`ext:${seed}`);
   const n = (mu: number, sd: number, lo = 20, hi = 98) => Math.round(clamp(rng.normal(mu, sd), lo, hi));
   const longer = (h.bestDistance - 1800) / 400;
@@ -192,6 +197,8 @@ export interface AptitudeBreakdown {
   going: number;
   direction: number;
   season: number;
+  /** 当日の状態（調子・疲労） */
+  form: number;
 }
 
 export interface RaceAbility {
@@ -293,10 +300,14 @@ export function raceAbility(p: HorseProfile, inp: RaceAbilityInput): RaceAbility
   // 坂：パワーと坂適性。ゴール前の坂が高いほど差が出る（坂の高さは勾配として計算側で効く）
   const hill = (1.5 - p.power / 100) * (1.25 - a.slope / 200);
 
-  const speedAdj = surface + distance + going + direction + season;
+  // 当日の状態：調子は最大 ±0.06 m/s（能力を大きく超えないよう小さく抑える）、疲労は最大 −0.08 m/s とスタミナ −8%
+  const f = p.form;
+  const form = f ? 0.06 * clamp(f.condition, -1, 1) - 0.08 * (f.fatigue / 100) : 0;
+  if (f) staminaFactor *= 1 - 0.08 * (f.fatigue / 100);
+  const speedAdj = surface + distance + going + direction + season + form;
   return {
     speedAdj,
-    breakdown: { surface, distance, going, direction, season },
+    breakdown: { surface, distance, going, direction, season, form },
     staminaFactor,
     aStart: 4.5 + (p.start / 100) * 0.6 + (p.burst / 100) * 0.9,
     aRun: 0.3 + (p.burst / 100) * 0.5,
@@ -305,7 +316,8 @@ export function raceAbility(p: HorseProfile, inp: RaceAbilityInput): RaceAbility
     fadeThreshold: clamp(0.3 + (75 - p.sustain) / 500, 0.2, 0.4),
     hill,
     cornerFactor,
-    kakariProb: Math.pow((100 - p.temper) / 100, 1.5) * 0.35,
+    // 精神的疲労がたまると掛かりやすい
+    kakariProb: Math.pow((100 - p.temper) / 100, 1.5) * 0.35 * (1 + (f?.mental ?? 0) / 100),
     kakariDuration: clamp(1 + (75 - p.control) / 125, 0.6, 1.5),
     startDelay: 0.1 + ((100 - p.start) / 100) * 0.3,
     lateStartProb: 0.03 + ((100 - p.start) / 100) * 0.05 + ((100 - p.temper) / 100) * 0.02,

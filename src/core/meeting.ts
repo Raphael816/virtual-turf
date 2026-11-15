@@ -136,7 +136,9 @@ export async function createMeeting(meetingId: string, seedFn: () => string = se
     const weights = pool.map((h) => {
       const grade = plan.surface === 'turf' ? h.turf : h.dirt;
       const fit = Math.exp(-(((distance - h.bestDistance) / 500) ** 2)) + 0.1;
-      return (GRADE_WEIGHT[grade] * fit) / (1 + 2 * (usage.get(h.id) ?? 0));
+      // 疲労の残っている馬は出走を見送られやすい
+      const fresh = 1 - (h.form?.fatigue ?? 0) / 100;
+      return (GRADE_WEIGHT[grade] * fit * fresh) / (1 + 2 * (usage.get(h.id) ?? 0));
     });
     const chosen: Horse[] = [];
     while (chosen.length < size) {
