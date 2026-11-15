@@ -1,4 +1,5 @@
 import { type RaceCard, type RaceEntry, entryHorse } from '../core/meeting';
+import { CLASS_SHORT, PRIZE_SHARE, RULE_LABEL, isGraded, prizeFor, termsLabel } from '../core/raceclass';
 import { type RaceRuntime, type RaceStatus, STATUS_LABEL, raceStatus } from '../core/raceflow';
 import { GOING_LABEL, SURFACE_LABEL, TIME_LABEL, WEATHER_LABEL, courseShort } from '../core/sim';
 import type { Horse } from '../data/roster';
@@ -36,7 +37,26 @@ export function surfaceChip(card: RaceCard): string {
 
 export function conditionText(card: RaceCard): string {
   const c = card.conditions;
-  return `${WEATHER_LABEL[c.weather]}・${SURFACE_LABEL[c.surface]}${GOING_LABEL[c.going]}・${TIME_LABEL[c.timeOfDay]}・${card.entries.length}頭`;
+  const t = card.terms ? `${termsLabel(card.terms)}・${RULE_LABEL[card.terms.rule]}・` : '';
+  return `${t}${WEATHER_LABEL[c.weather]}・${SURFACE_LABEL[c.surface]}${GOING_LABEL[c.going]}・${TIME_LABEL[c.timeOfDay]}・${card.entries.length}頭`;
+}
+
+/** 重賞・リステッドの格付けの印 */
+export function gradeChip(card: Pick<RaceCard, 'terms'>): string {
+  const c = card.terms?.cls;
+  if (!c || !(isGraded(c) || c === 'listed')) return '';
+  return ` <span class="chip chip-grade chip-${c}">${CLASS_SHORT[c]}</span>`;
+}
+
+/** 本賞金（1〜5着。万円） */
+export function prizeText(card: RaceCard): string {
+  if (!card.terms) return '';
+  return PRIZE_SHARE.map((_, i) => `${i + 1}着 ${prizeFor(card.terms!.prize, i + 1).toLocaleString()}万`).join('・');
+}
+
+/** 負担重量の表示（57、57.5） */
+export function kgText(kg: number | undefined): string {
+  return kg === undefined ? '—' : Number.isInteger(kg) ? String(kg) : kg.toFixed(1);
 }
 
 /** 状態に応じた時刻表示（締切まで／発走まで／確定） */
@@ -56,7 +76,7 @@ export function timingText(card: RaceCard): string {
 }
 
 export function raceTitle(card: RaceCard): string {
-  return `${card.no}R ${esc(card.name)}`;
+  return `${card.no}R ${esc(card.name)}${gradeChip(card)}`;
 }
 
 export function nextOpenRace(): RaceCard | undefined {
@@ -88,8 +108,8 @@ export function recentRuns(e: RaceEntry, raceId: string, n = 5): RunRecord[] {
 }
 
 /** 近走の着順を小さな枠で表す（1〜3着は色付き）。title に詳細 */
-export function formBadges(runs: RunRecord[]): string {
-  if (!runs.length) return '<span class="muted" style="font-size:.8rem">初出走</span>';
+export function formBadges(runs: RunRecord[], firstRun = true): string {
+  if (!runs.length) return `<span class="muted" style="font-size:.8rem">${firstRun ? '初出走' : '記録なし'}</span>`;
   return `<span class="form">${runs
     .map((r) => {
       const cls = r.rk === 1 ? 'f1' : r.rk === 2 ? 'f2' : r.rk === 3 ? 'f3' : '';
@@ -98,10 +118,18 @@ export function formBadges(runs: RunRecord[]): string {
     .join('')}</span>`;
 }
 
+/** その出走が初めての出走か（このレースより前の出走数が0） */
+export function isFirstRun(e: RaceEntry, raceId: string): boolean {
+  const wh = findHorse(store.state.world, e.horseId);
+  if (!wh) return true;
+  return wh.career.starts - (wh.history.some((r) => r.r === raceId) ? 1 : 0) <= 0;
+}
+
 /** 前走からの間隔の表記（中N週・休み明け・初出走） */
-export function intervalText(runs: RunRecord[]): string {
+export function intervalText(runs: RunRecord[], firstRun = true): string {
   const prev = runs[0];
-  if (!prev) return '初出走';
+  // 出走経験はあるが記録がない：ゲーム開始時点の馬（それ以前の戦績は持っていない）
+  if (!prev) return firstRun ? '初出走' : '近走の記録なし';
   const d = store.state.world.date;
   const weeks = (d.year - prev.y) * 52 + (d.week - prev.w);
   if (weeks >= 10) return `休み明け（${weeks}週）`;

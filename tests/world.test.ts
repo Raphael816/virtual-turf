@@ -50,16 +50,17 @@ describe('開催と戦績', () => {
     const cards = await createMeeting('W3', () => 'seed', s.world);
     s = await openMeeting(s, 'W3', cards, T0);
     const card = cards[0];
+    const before = new Map(card.entries.map((e) => [e.horseId, s.world.horses.find((x) => x.id === e.horseId)!.career]));
     s = await closeRace(s, card.id, estimateProbabilities(card, 20), T0 + 1000);
     s = await finishRace(s, card.id, s.meeting!.runtime[card.id].endsAt!);
     for (const e of card.entries) {
       const h = s.world.horses.find((x) => x.id === e.horseId)!;
       expect(h.history[0].r).toBe(card.id);
-      expect(h.career.starts).toBe(1);
+      expect(h.career.starts).toBe(before.get(e.horseId)!.starts + 1);
       expect(h.history[0].pop).toBeGreaterThanOrEqual(1);
     }
     const winner = card.entries[runRace(card, card.seed, { record: false }).order[0]];
-    expect(s.world.horses.find((x) => x.id === winner.horseId)!.career.wins).toBe(1);
+    expect(s.world.horses.find((x) => x.id === winner.horseId)!.career.wins).toBe(before.get(winner.horseId)!.wins + 1);
     // 次の週・その次の週は出走できず、MIN_REST_WEEKS 週後には出走できる
     let w = s.world;
     const ran = (ww: typeof w) => eligibleHorses(ww).some((h) => h.id === card.entries[0].horseId);

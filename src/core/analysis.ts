@@ -78,6 +78,14 @@ export function analyzeRace(card: RaceCard, res: SimResult, favoriteNumber?: num
   if (h.power >= 85) points.push('ゴール前の急坂でも、パワーを生かして脚色が鈍りませんでした。');
   if (Math.abs(D - h.bestDistance) <= 200) points.push(`最適距離（${h.bestDistance}m前後）に近い条件も合っていました。`);
   if (f.condition > 0.08) points.push('当日の調子も上向きでした（調子は毎レース少しずつ変動します）。');
+  // 負担重量：出走馬の中央値より 2kg 以上軽い／重い
+  const kgs = card.entries.map((e) => e.weight).filter((x): x is number => x !== undefined).sort((a, b) => a - b);
+  const kgMid = kgs.length ? kgs[Math.floor((kgs.length - 1) / 2)] : undefined;
+  const wkg = card.entries[w].weight;
+  if (kgMid !== undefined && wkg !== undefined) {
+    if (wkg <= kgMid - 2) points.push(`${wkg}kgと、他の馬より軽い負担重量も味方しました。`);
+    else if (wkg >= kgMid + 2) points.push(`${wkg}kgと重い負担重量を背負っての勝利でした。`);
+  }
 
   // 4. 着差
   const close = ['ハナ', 'アタマ', 'クビ'].includes(marginToSecond);
@@ -101,6 +109,8 @@ export function analyzeRace(card: RaceCard, res: SimResult, favoriteNumber?: num
     if (ff.staminaEnd < 0.05 && D > fh.bestDistance + 200) reasons.push('距離が長く最後に脚が上がり');
     if (going >= 2 && (fh.heavy === 'C' || fh.heavy === 'D')) reasons.push('道悪が合わず');
     if (ff.laneLoss > avgLoss + 8) reasons.push(`外を回るロス（約${ff.laneLoss.toFixed(0)}m）があり`);
+    const fkg = card.entries[favIdx].weight;
+    if (kgMid !== undefined && fkg !== undefined && fkg >= kgMid + 2) reasons.push(`${fkg}kgの重い負担重量もこたえ`);
     if (!reasons.length && res.pace === 'high' && (ff.style === 'nige' || ff.style === 'senko')) reasons.push('速い流れを前で受けて最後に苦しくなり');
     if (!reasons.length && res.pace === 'slow' && (ff.style === 'sashi' || ff.style === 'oikomi')) reasons.push('スローペースで前が止まらず届かず');
     if (!reasons.length && ff.condition < -0.06) reasons.push('当日の調子がいまひとつで');

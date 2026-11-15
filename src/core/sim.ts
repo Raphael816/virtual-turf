@@ -7,6 +7,7 @@
 import type { Horse, RunningStyle } from '../data/roster';
 import { type AptitudeBreakdown, type ExtendedAbilities, profileOf, raceAbility } from './ability';
 import { Rng } from './rng';
+import { weightEffect } from './raceclass';
 import { type Surface, cornersOnRoute, courseFor, courseTraits, curvatureAt, gradeAt, raceU } from './track';
 
 /**
@@ -14,7 +15,7 @@ import { type Surface, cornersOnRoute, courseFor, courseTraits, curvatureAt, gra
  * 3.1.0: 出走時点の状態（調子・疲労・精神的疲労）を計算に入れる
  * 3.0.0: 能力・適性を拡張（持続力・操縦性・健康・距離の幅・回り・坂・小回り・直線・季節）、脚質の位置取りを展開で変える
  */
-export const ENGINE_VERSION = 'sim-3.1.0';
+export const ENGINE_VERSION = 'sim-3.2.0';
 
 export type Weather = 'sunny' | 'cloudy' | 'drizzle' | 'rain';
 export type Going = 'good' | 'yielding' | 'soft' | 'heavy';
@@ -47,6 +48,8 @@ export interface SimRunner {
   horse: Horse & ExtendedAbilities;
   /** 馬番 */
   number: number;
+  /** 負担重量 (kg)。ない場合は重量の影響なし（古い出走表） */
+  weight?: number;
 }
 
 export interface SimOptions {
@@ -83,6 +86,9 @@ export interface RunnerFactors {
   breakdown: AptitudeBreakdown;
   /** 実際の位置取り（1コーナーの位置から判定。脚質どおりとは限らない） */
   actualStyle: RunningStyle;
+  /** 負担重量 (kg) と、それによる最高速度の補正 (m/s) */
+  weight?: number;
+  weightEffect: number;
 }
 
 export type SimEventType = 'late_start' | 'kakari' | 'lead' | 'duel' | 'spurt' | 'blocked' | 'fade' | 'finish';
@@ -176,7 +182,10 @@ export function simulateRace(cond: RaceConditions, runners: SimRunner[], seed: s
     const ab = raceAbility(prof, { surface: cond.surface, distance: D, goingIndex: g, course: traits, month: cond.month });
     const condition = rng.normal(0, ab.conditionSd);
     const base = cond.surface === 'turf' ? 17.9 - 0.12 * g : 17.3 + 0.07 * g;
-    const vTop = base + (h.speed - 75) * 0.018 + ab.speedAdj + condition;
+    const vTop0 = base + (h.speed - 75) * 0.018 + ab.speedAdj + condition;
+    // 負担重量（raceclass.ts。1kg ≒ 1馬身の目安）
+    const we = weightEffect(r.weight, D);
+    const vTop = vTop0 * we.speed;
     const kakari = rng.chance(ab.kakariProb);
     const kakariStart = rng.range(4, 12);
     const kakariDur = rng.range(10, 28) * ab.kakariDuration;
@@ -192,7 +201,9 @@ export function simulateRace(cond: RaceConditions, runners: SimRunner[], seed: s
       aptitude: ab.speedAdj,
       breakdown: ab.breakdown,
       condition,
-      staminaFactor: ab.staminaFactor,
+      staminaFactor: ab.staminaFactor * we.stamina,
+      weight: r.weight,
+      weightEffect: vTop - vTop0,
       kakari,
       kakariStart,
       kakariEnd: kakariStart + (kakari ? kakariDur : 0),
@@ -566,6 +577,8 @@ export function simulateRace(cond: RaceConditions, runners: SimRunner[], seed: s
     posAtLastCorner: lastCorner ? lastCorner.order.indexOf(i) + 1 : 0,
     breakdown: p.breakdown,
     actualStyle: actualStyleOf(i),
+    ...(p.weight !== undefined ? { weight: p.weight } : {}),
+    weightEffect: p.weightEffect,
   }));
 
   events.sort((a, b) => a.t - b.t);

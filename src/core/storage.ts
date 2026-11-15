@@ -75,7 +75,7 @@ export function migrate(raw: unknown): AppState | null {
     v = 2;
   }
   s.version = v;
-  // 競馬界の形式の移行（schema 1 → 2：生涯の状態を追加）
+  // 競馬界の形式の移行（schema 1 → 2：生涯の状態、2 → 3：収得賞金・クラス）
   if (s.world && typeof s.world === 'object') s.world = upgradeWorld(s.world as World);
   return s as unknown as AppState;
 }
