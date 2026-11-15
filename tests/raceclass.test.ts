@@ -180,9 +180,10 @@ describe('番組と出馬表', () => {
         expect(ageEligible(t.age, ageOf(h, w.date))).toBe(true);
         expect(classEligible(t.cls, { earnings: h.earnings, starts: h.career.starts })).toBe(true);
         if (t.filly) expect(h.sex).toBe('牝');
-        expect(e.weight).toBeGreaterThanOrEqual(49);
+        expect(e.weight).toBeGreaterThanOrEqual(45);
         expect(e.weight).toBeLessThanOrEqual(60);
-        if (t.rule === 'age') expect(e.weight).toBe(ageWeight(ageOf(h, w.date), h.sex, 7));
+        // 馬齢重量から、騎手の減量（見習・女性。第9段階）を引いた値
+        if (t.rule === 'age') expect(e.weight).toBe(ageWeight(ageOf(h, w.date), h.sex, 7) - (e.ride?.allowance ?? 0));
         expect(entryHorse(e).id).toBe(h.id);
       }
     }
@@ -250,7 +251,7 @@ describe('番組と出馬表', () => {
       horses: w.horses.map(({ earnings: _e, ...h }, i) => ({ ...h, career: { starts: 5, wins: i % 3, seconds: 1, thirds: 0 } })),
     };
     const up = upgradeWorld(old as unknown as World);
-    expect(up.schema).toBe(4);
+    expect(up.schema).toBe(5);
     expect(up.horses.every((h) => typeof h.earnings === 'number' && h.career.starts === 5)).toBe(true);
     // 2勝している馬は少なくとも 2勝クラス
     const two = up.horses.find((_h, i) => i % 3 === 2)!;

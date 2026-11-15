@@ -63,7 +63,9 @@ describe('開催と戦績', () => {
     expect(s.world.horses.find((x) => x.id === winner.horseId)!.career.wins).toBe(before.get(winner.horseId)!.wins + 1);
     // 次の週・その次の週は出走できず、MIN_REST_WEEKS 週後には出走できる
     let w = s.world;
-    const ran = (ww: typeof w) => eligibleHorses(ww).some((h) => h.id === card.entries[0].horseId);
+    // 出走した馬のうち、だれかが出走できるか（疲労や故障で休む馬もいるので、1頭に決めない）
+    const ids = new Set(card.entries.map((e) => e.horseId));
+    const ran = (ww: typeof w) => eligibleHorses(ww).some((h) => ids.has(h.id));
     for (let i = 1; i < MIN_REST_WEEKS; i++) {
       w = advanceWeek(w);
       expect(ran(w)).toBe(false);

@@ -172,6 +172,7 @@ export function resultForWorld(card: RaceCard, res: SimResult, pools?: Pools): R
       last3F: res.last3F[i],
       passing: res.cornerOrders.map((c) => c.order.indexOf(i) + 1).join('-'),
       jockey: e.jockey,
+      ...(e.ride ? { jockeyId: e.ride.id } : {}),
       ...(odds[i] !== null ? { odds: odds[i]!, popularity: popOrder.indexOf(i) + 1 } : {}),
     })),
   };

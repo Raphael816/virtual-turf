@@ -264,3 +264,5 @@ input[type='number'], input[type='text'], select {
 .form .fb.f1 { background: #c9a227; color: #111; border-color: #c9a227; }
 .form .fb.f2 { background: #9fb3c8; color: #111; border-color: #9fb3c8; }
 .form .fb.f3 { background: #b07a4a; color: #111; border-color: #b07a4a; }
+.bar { height: 8px; background: rgba(255, 255, 255, .08); border-radius: 4px; overflow: hidden; min-width: 80px; }
+.bar > i { display: block; height: 100%; background: var(--accent, #4fbf7f); border-radius: 4px; }

@@ -16,6 +16,7 @@ import { npcPlan, train } from './training';
 import { type ClassId, type RaceTerms, earningsAdd, prizeFor } from './raceclass';
 import { MAIDEN3_LAST_WEEK, venueOfWeek } from './program';
 import { type TrackStates, advanceTracks, initialTracks } from './weather';
+import { type JockeyTable, initialJockeyTable } from './jockey';
 import { Rng } from './rng';
 
 export const WEEKS_PER_YEAR = 52;
@@ -118,14 +119,16 @@ export interface WorldHorse extends Horse {
 }
 
 export interface World {
-  /** 2：生涯の状態（life）を追加、3：収得賞金・クラス（第5段階）、4：馬場の状態（第7段階） */
-  schema: 4;
+  /** 2：生涯の状態（life）を追加、3：収得賞金・クラス（第5段階）、4：馬場の状態（第7段階）、5：騎手の成績（第9段階） */
+  schema: 5;
   date: GameDate;
   /** これまでに開いた開催日の数 */
   meetings: number;
   horses: WorldHorse[];
   /** 競馬場ごとの含水率・開催日数・使用コース（第7段階） */
   tracks: TrackStates;
+  /** 騎手の成績（第9段階） */
+  jockeys: JockeyTable;
 }
 
 export function ageOf(h: Pick<WorldHorse, 'birthYear'>, date: GameDate): number {
@@ -220,7 +223,7 @@ export function createWorld(extra = 664): World {
     if (!name) break;
     horses.push(toWorldHorse(generateHorse(rng, `g${String(horses.length).padStart(4, '0')}`, name), date, true));
   }
-  return { schema: 4, date, meetings: 0, horses: assignInitialClasses(horses, date), tracks: initialTracks() };
+  return { schema: 5, date, meetings: 0, horses: assignInitialClasses(horses, date), tracks: initialTracks(), jockeys: initialJockeyTable() };
 }
 
 /** 能力の総合点（初期のクラス分けの順位づけに使う） */
@@ -281,7 +284,7 @@ export function earningsFromWins(wins: number): number {
 
 /** 生涯の状態がない古い競馬界（schema 1）を移行する（今の能力を現在の値とし、上限を逆算） */
 export function upgradeWorld(w: World | (Omit<World, 'schema'> & { schema: number })): World {
-  if (w.schema === 4) return w as World;
+  if (w.schema === 5) return w as World;
   let horses = (w.horses as (Omit<WorldHorse, 'life' | 'earnings'> & { life?: Life; earnings?: number })[]).map((h) => ({
     ...h,
     life: h.life ?? initLife(h, bioAge(h.birthYear, w.date), h.id),
@@ -298,7 +301,8 @@ export function upgradeWorld(w: World | (Omit<World, 'schema'> & { schema: numbe
     }));
   }
   // 馬場の状態（schema 4）：乾いた状態から始める
-  return { ...(w as World), schema: 4, horses, tracks: (w as Partial<World>).tracks ?? initialTracks() };
+  // 騎手の成績（schema 5）：0 から数える
+  return { ...(w as World), schema: 5, horses, tracks: (w as Partial<World>).tracks ?? initialTracks(), jockeys: (w as Partial<World>).jockeys ?? initialJockeyTable() };
 }
 
 // ---------------------------------------------------------------- 進行
@@ -348,7 +352,10 @@ export function advanceWeek(world: World): World {
   // 天候と馬場：前の開催日から今度の開催日の朝まで（全場）。今週の開催場は開催日数・使用コースを進める
   const tracks = advanceTracks(world.tracks ?? initialTracks(), world.date, date, venueOfWeek(date.week));
   if (date.week === MAIDEN3_LAST_WEEK + 1) horses = maidenCutoff(horses, date);
-  return { ...world, date, meetings: world.meetings + 1, horses, tracks };
+  // 年明け：騎手の今年の成績を 0 に戻す
+  let jockeys = world.jockeys ?? initialJockeyTable();
+  if (date.week === 1) jockeys = Object.fromEntries(Object.entries(jockeys).map(([k, v]) => [k, { ...v, yRides: 0, yWins: 0 }]));
+  return { ...world, date, meetings: world.meetings + 1, horses, tracks, jockeys };
 }
 
 /**
@@ -416,7 +423,7 @@ export interface RaceResultForWorld {
   /** 条件（クラス・賞金）。ない場合（古い出走表）は収得賞金・本賞金を加えない */
   terms?: RaceTerms;
   /** 出走馬ごと（馬番順でなくてよい） */
-  runners: { horseId: string; number: number; rank: number; time: number; margin: string; last3F: number; passing: string; jockey: string; kakari?: boolean; odds?: number; popularity?: number; weight?: number }[];
+  runners: { horseId: string; number: number; rank: number; time: number; margin: string; last3F: number; passing: string; jockey: string; jockeyId?: string; kakari?: boolean; odds?: number; popularity?: number; weight?: number }[];
 }
 
 /** レース結果を各馬の戦績に記録する */
@@ -471,7 +478,24 @@ export function recordRace(world: World, res: RaceResultForWorld): World {
       history: [rec, ...h.history].slice(0, HISTORY_LIMIT),
     };
   });
-  return { ...world, horses };
+  // 騎手の成績（同じレースを二重に数えない：馬の戦績に新しく記録された分だけ）
+  const jockeys = { ...(world.jockeys ?? initialJockeyTable()) };
+  for (const r of res.runners) {
+    if (!r.jockeyId || !jockeys[r.jockeyId]) continue;
+    const before = world.horses.find((h) => h.id === r.horseId);
+    if (!before || before.history.some((x) => x.r === res.raceId)) continue;
+    const j = jockeys[r.jockeyId];
+    jockeys[r.jockeyId] = {
+      rides: j.rides + 1,
+      wins: j.wins + (r.rank === 1 ? 1 : 0),
+      seconds: j.seconds + (r.rank === 2 ? 1 : 0),
+      thirds: j.thirds + (r.rank === 3 ? 1 : 0),
+      yRides: j.yRides + 1,
+      yWins: j.yWins + (r.rank === 1 ? 1 : 0),
+      prize: j.prize + (res.terms ? prizeFor(res.terms.prize, r.rank) : 0),
+    };
+  }
+  return { ...world, horses, jockeys };
 }
 
 export function findHorse(world: World | undefined, id: string): WorldHorse | undefined {

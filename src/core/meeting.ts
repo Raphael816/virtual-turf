@@ -26,6 +26,8 @@ import {
 import { type ProgramAlt, type ProgramSlot, SLOTS, SPECIAL_NAMES, altsFor, distanceOptions, stakesOfWeek, venueOfWeek } from './program';
 import { VENUES, type Layout, type VenueId } from '../data/venues';
 import { RAIL_LABEL, initialTracks, raceDaySky, wearOf } from './weather';
+import { type Jockey, type Ride, JOCKEY_LIST, allowanceOf, careerWins, makeRide, rating, yearsOf } from './jockey';
+import { START_YEAR } from './world';
 import { Rng, secureSeed, sha256Hex } from './rng';
 import {
   ENGINE_VERSION,
@@ -46,6 +48,8 @@ export interface RaceEntry {
   /** 枠番 */
   frame: number;
   jockey: string;
+  /** その日の騎乗（騎手の技術・減量）。第9段階から。ない出走表は騎手の影響なし */
+  ride?: Ride;
   /** 負担重量 (kg)。第5段階から（古い出走表にはない） */
   weight?: number;
   /**
@@ -214,20 +218,59 @@ function pickMany<T>(rng: Rng, pool: T[], weights: number[], size: number): T[] 
   return chosen;
 }
 
-function toEntries(rng: Rng, chosen: Horse[], weightOf: (h: Horse, i: number) => number | undefined, keepSnapshot: boolean): RaceEntry[] {
+function toEntries(
+  rng: Rng,
+  chosen: Horse[],
+  weightOf: (h: Horse, i: number) => number | undefined,
+  keepSnapshot: boolean,
+  rideOf?: (h: Horse, i: number) => { name: string; ride: Ride } | undefined,
+): RaceEntry[] {
   const order = rng.shuffle(chosen.map((h, i) => ({ h, i })));
   const jockeys = rng.shuffle([...JOCKEYS]);
   return order.map(({ h, i }, k) => {
     const weight = weightOf(h, i);
+    const r = rideOf?.(h, i);
     return {
       horseId: h.id,
       number: k + 1,
       frame: frameOf(order.length, k + 1),
-      jockey: jockeys[k % jockeys.length],
-      ...(weight !== undefined ? { weight } : {}),
+      jockey: r?.name ?? jockeys[k % jockeys.length],
+      ...(r ? { ride: r.ride } : {}),
+      // 減量（見習騎手・女性騎手）は負担重量から引く
+      ...(weight !== undefined ? { weight: weight - (r?.ride.allowance ?? 0) } : {}),
       ...(keepSnapshot ? { horse: h } : {}),
     };
   });
+}
+
+/**
+ * 騎手の割り当て（第9段階）：
+ * - 有力な馬（能力の高い馬）から順に騎手を決める。上手な騎手ほど選ばれやすい（有力馬には上位の騎手が集まる）
+ * - 前走で乗った騎手は続けて乗りやすい（4倍）
+ * - 減量のある騎手は、一般競走で少し選ばれやすい（軽い重量を生かす。1kg につき 1.25倍）
+ * - 1レースに同じ騎手は1頭だけ
+ */
+function assignJockeys(rng: Rng, horses: WorldHorse[], world: World, terms: RaceTerms, cond: Pick<RaceConditions, 'surface' | 'distance' | 'venue'>): { name: string; ride: Ride }[] {
+  const strength = horses.map((h) => h.speed * 0.4 + h.accel * 0.25 + h.stamina * 0.2 + h.power * 0.15 + rng.normal(0, 3));
+  const order = horses.map((_, i) => i).sort((a, b) => strength[b] - strength[a]);
+  const free = new Set(JOCKEY_LIST.map((j) => j.id));
+  const out = new Array<{ name: string; ride: Ride }>(horses.length);
+  const allow = (j: Jockey) => allowanceOf(j.sex, yearsOf(j, START_YEAR, world.date.year), careerWins(j, world.jockeys), terms.special, terms.rule === 'handicap');
+  for (const i of order) {
+    const h = horses[i];
+    const cands = JOCKEY_LIST.filter((j) => free.has(j.id));
+    const weights = cands.map((j) => {
+      let w = Math.exp((rating(j) - 70) / 9);
+      if (h.history[0]?.j === j.name) w *= 4;
+      w *= 1.25 ** allow(j).kg;
+      return w;
+    });
+    const j = cands[pickWeighted(rng, cands, weights)];
+    free.delete(j.id);
+    const ridesTogether = h.history.filter((x) => x.j === j.name).length;
+    out[i] = { name: j.name, ride: makeRide(j, { venue: cond.venue, surface: cond.surface, distance: cond.distance, horseId: h.id, horseStyle: h.style, ridesTogether }, allow(j)) };
+  }
+  return out;
 }
 
 /** 出走できる馬が少なすぎるレースは組まない */
@@ -363,7 +406,8 @@ function draftProgram(meetingId: string, world: World): Draft[] {
       meetDay: track.day,
       temp: sk.temp,
     };
-    bySlot.set(r, { name, conditions, terms, entries: toEntries(rng, snaps, (_h, i) => weightOf[i], true) });
+    const rides = assignJockeys(rng, chosen, world, terms, conditions);
+    bySlot.set(r, { name, conditions, terms, entries: toEntries(rng, snaps, (_h, i) => weightOf[i], true, (_h, i) => rides[i]) });
   }
   for (let r = 0; r < SLOTS.length; r++) {
     const d = bySlot.get(r);
@@ -404,7 +448,7 @@ export function entryWeights(terms: RaceTerms, horses: WorldHorse[], world: Worl
 
 /** 出走表と seed からレースを実行する（結果決定用・モンテカルロ用で共通） */
 export function runRace(card: Pick<RaceCard, 'id' | 'conditions' | 'entries'>, seed: string, opts?: SimOptions): SimResult {
-  const runners = card.entries.map((e) => ({ horse: entryHorse(e), number: e.number, ...(e.weight !== undefined ? { weight: e.weight } : {}) }));
+  const runners = card.entries.map((e) => ({ horse: entryHorse(e), number: e.number, ...(e.weight !== undefined ? { weight: e.weight } : {}), ...(e.ride ? { rider: e.ride.skills } : {}) }));
   return simulateRace(card.conditions, runners, `${card.id}|${seed}`, opts);
 }
 
