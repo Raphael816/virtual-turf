@@ -3,6 +3,7 @@
  * スマートフォンでは映像の下をタブで切り替え、PC では右側に投票パネルを常時表示する。
  */
 import { jockeyLink } from './jockey';
+import { pedigreeLine } from './sire';
 import { BET_TYPES, BET_TYPE_BY_ID, type BetTypeId, isSold, parseKey } from '../../core/bettypes';
 import { type CommentaryLine, buildCommentary } from '../../core/commentary';
 import { runRace, verifyRace } from '../../core/meeting';
@@ -229,6 +230,7 @@ export function racePage(raceId: string): Page {
           <div class="paper-head">
             <div class="paper-name">${numBadge(e.number, e.frame, 'lg')} <a href="#/horse/${h.id}">${esc(h.name)}</a></div>
             <div class="entry-sub">${h.sex}${h.age}・${esc(h.coat)}・${STYLE_LABEL[h.style]}・${esc(h.trainer)}</div>
+            ${wh?.ped ? `<div class="entry-sub">${pedigreeLine(wh.ped)}</div>` : ''}
             <dl class="paper-dl">
               <dt>騎手</dt><dd>${jockeyLink(e.jockey, e.ride?.id, e.ride?.mark)} ${kgText(e.weight)}</dd>
               <dt>馬体重</dt><dd class="tnum">${bodyText(e.body, e.bodyDiff, first)}</dd>

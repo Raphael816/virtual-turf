@@ -7,6 +7,7 @@ import { historyPage } from './ui/pages/history';
 import { homePage } from './ui/pages/home';
 import { horsePage } from './ui/pages/horse';
 import { jockeyPage, jockeysPage } from './ui/pages/jockey';
+import { sirePage, siresPage } from './ui/pages/sire';
 import { previewPage } from './ui/pages/preview';
 import { racePage } from './ui/pages/race';
 import { racesPage } from './ui/pages/races';
@@ -33,7 +34,7 @@ function shell(): void {
     <main id="main" tabindex="-1"></main>
     <footer class="site-footer">
       <p>これは競馬シミュレーションのデモです。デモコインは購入・換金・譲渡ができず、金銭的な価値はありません。
-      登場する馬・人物・競馬場・レースはすべて架空です。<a href="#/guide">遊び方と仕組み</a>／<a href="#/jockeys">騎手リーディング</a>／<a href="#/preview">馬モデルのプレビュー</a>／<a href="#/account">設定</a></p>
+      登場する馬・人物・競馬場・レースはすべて架空です。<a href="#/guide">遊び方と仕組み</a>／<a href="#/jockeys">騎手リーディング</a>／<a href="#/sires">種牡馬</a>／<a href="#/preview">馬モデルのプレビュー</a>／<a href="#/account">設定</a></p>
     </footer>
     <nav class="nav-mobile" aria-label="メイン">${NAV.map((n) => `<a href="${n.href}">${n.icon}<span>${n.label}</span></a>`).join('')}</nav>
     <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>`;
@@ -73,6 +74,12 @@ function route(): void {
       break;
     case 'jockeys':
       page = jockeysPage();
+      break;
+    case 'sires':
+      page = siresPage();
+      break;
+    case 'sire':
+      page = sirePage(decodeURIComponent(param ?? ''));
       break;
     case 'jockey':
       page = jockeyPage(decodeURIComponent(param ?? ''));
