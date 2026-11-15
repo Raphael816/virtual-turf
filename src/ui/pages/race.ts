@@ -10,7 +10,13 @@ import { type OddsBook, payout, popularity } from '../../core/pool';
 import { closeRace, currentOddsBook, finishRace } from '../../core/raceflow';
 import { activeRestriction } from '../../core/responsible';
 import { analyzeRace } from '../../core/analysis';
-import { PACE_LABEL, type SimResult, courseShort, formatTime } from '../../core/sim';
+import { bodyText } from '../../core/bodyweight';
+import { conditionLabel } from '../../core/lifecycle';
+import { paperNotes, splitCourse, talliesFor, tallyText } from '../../core/paper';
+import { postRaceComments } from '../../core/postrace';
+import { CLASS_SHORT } from '../../core/raceclass';
+import { findHorse } from '../../core/world';
+import { GOING_LABEL, PACE_LABEL, type SimResult, WEATHER_LABEL, courseShort, formatTime } from '../../core/sim';
 import { placeBet, quoteBet } from '../../core/state';
 import { STYLE_LABEL } from '../../data/roster';
 import { distanceMark, gradeOf, profileOf } from '../../core/ability';
@@ -40,8 +46,8 @@ import {
 import { store } from '../store';
 import { $, coins, countdown, esc, numBadge, openDialog, toast } from '../util';
 
-type Tab = 'card' | 'bet' | 'odds' | 'feed' | 'result';
-const TAB_LABEL: Record<Tab, string> = { card: '出馬表', bet: '投票', odds: 'オッズ', feed: '実況', result: '結果' };
+type Tab = 'card' | 'paper' | 'bet' | 'odds' | 'feed' | 'result';
+const TAB_LABEL: Record<Tab, string> = { card: '出馬表', paper: '新聞', bet: '投票', odds: 'オッズ', feed: '実況', result: '結果' };
 
 export function racePage(raceId: string): Page {
   const card = store.state.meeting?.cards.find((c) => c.id === raceId);
@@ -76,7 +82,7 @@ export function racePage(raceId: string): Page {
   const resizeObs = new ResizeObserver(() => viewer?.resize());
 
   const isWide = () => wideMq.matches;
-  const tabs = (): Tab[] => (isWide() ? ['card', 'odds', 'feed', 'result'] : ['card', 'bet', 'odds', 'feed', 'result']);
+  const tabs = (): Tab[] => (isWide() ? ['card', 'paper', 'odds', 'feed', 'result'] : ['card', 'paper', 'bet', 'odds', 'feed', 'result']);
 
   // ---- データ ----
   const probs = () => store.getProbs(card.id);
@@ -126,7 +132,7 @@ export function racePage(raceId: string): Page {
     return `
       <div class="table-wrap"><table class="table">
         <caption class="sr-only">${raceTitle(card)} 出馬表</caption>
-        <thead><tr><th>馬番</th><th>馬名・騎手</th><th class="r" title="負担重量 (kg)">斤量</th><th>近走</th><th class="hide-sm">脚質</th><th class="hide-sm">適性</th><th class="r">単勝</th><th class="r">人気</th>${fin ? '<th class="r">着順</th>' : ''}</tr></thead>
+        <thead><tr><th>馬番</th><th>馬名・騎手</th><th class="r" title="負担重量 (kg)">斤量</th><th class="r hide-sm" title="馬体重 (kg) と前走からの増減">馬体重</th><th>近走</th><th class="hide-sm">脚質</th><th class="hide-sm">適性</th><th class="r">単勝</th><th class="r">人気</th>${fin ? '<th class="r">着順</th>' : ''}</tr></thead>
         <tbody>${card.entries
           .map((e) => {
             const h = horseOf(e);
@@ -136,6 +142,7 @@ export function racePage(raceId: string): Page {
               <td>${numBadge(e.number, e.frame, 'lg')}</td>
               <td class="entry-name"><a href="#/horse/${h.id}">${esc(h.name)}</a><div class="entry-sub">${h.sex}${h.age}・${jockeyLink(e.jockey, e.ride?.id, e.ride?.mark)}${e.ride && Math.abs(e.ride.bonus) >= 3 ? `<span title="この条件・この馬との相性による、騎手の技術の上下">（${e.ride.bonus > 0 ? '好相性' : '相性△'}）</span>` : ''}・${intervalText(recentRuns(e, card.id), isFirstRun(e, card.id))}${lastWorkText(e.horseId) ? `・調教 ${lastWorkText(e.horseId)}` : ''}</div></td>
               <td class="r tnum">${kgText(e.weight)}</td>
+              <td class="r tnum hide-sm">${bodyText(e.body, e.bodyDiff, isFirstRun(e, card.id))}</td>
               <td>${formBadges(recentRuns(e, card.id), isFirstRun(e, card.id))}</td>
               <td class="hide-sm">${STYLE_LABEL[h.style]}</td>
               <td class="hide-sm"><span class="entry-sub">${card.conditions.surface === 'turf' ? '芝' : 'ダ'}</span> <span class="grade grade-${surf}">${surf}</span> <span class="entry-sub" title="距離適性（このレースの距離 ${card.conditions.distance}m に対して）">距離${distanceMark(profileOf(h).apt.distance, card.conditions.distance)}</span></td>
@@ -146,7 +153,82 @@ export function racePage(raceId: string): Page {
           })
           .join('')}</tbody>
       </table></div>
-      <p class="muted" style="font-size:.82rem">近走は新しい順の着順（左が前走。1〜3着は色付き、詳細は数字に触れると表示）。馬名を選ぶと能力値・適性・競走成績が見られます。適性はA（得意）〜D（苦手）、距離は◎（得意）○△×（不向き）。</p>`;
+      <p class="muted" style="font-size:.82rem">近走は新しい順の着順（左が前走。1〜3着は色付き）。過去5走の内容は「新聞」で見られます。馬名を選ぶと能力値・適性・競走成績が見られます。適性はA（得意）〜D（苦手）、距離は◎（得意）○△×（不向き）。</p>`;
+  };
+
+  const paperTab = () => {
+    const b = book();
+    const pop = b ? popularity(b, 'win') : [];
+    const now = splitCourse(courseShort(card.conditions));
+    const d = store.state.world.date;
+    const rows = card.entries
+      .map((e) => {
+        const h = horseOf(e);
+        const key = String(e.number);
+        const wh = findHorse(store.state.world, e.horseId);
+        const first = isFirstRun(e, card.id);
+        const all = recentRuns(e, card.id, 10);
+        const runs = all.slice(0, 5);
+        const prev = all[0];
+        const prof = profileOf(h);
+        const t = talliesFor(all, now);
+        // 通算成績は、このレースの分を除いた数にする
+        const ran = wh?.history.find((r) => r.r === card.id);
+        const c = wh?.career;
+        const career = c
+          ? [c.wins - (ran?.rk === 1 ? 1 : 0), c.seconds - (ran?.rk === 2 ? 1 : 0), c.thirds - (ran?.rk === 3 ? 1 : 0)]
+          : undefined;
+        const starts = c ? c.starts - (ran ? 1 : 0) : 0;
+        const notes = paperNotes(all, {
+          course: now,
+          ...(card.terms ? { cls: card.terms.cls } : {}),
+          ...(e.weight !== undefined ? { weight: e.weight } : {}),
+          jockey: e.jockey,
+          ...(e.bodyDiff !== undefined ? { bodyDiff: e.bodyDiff } : {}),
+          ...(h.form ? { condition: h.form.condition } : {}),
+          ...(prev ? { weeksSince: (d.year - prev.y) * 52 + (d.week - prev.w) } : {}),
+          firstRun: first,
+        });
+        const g = (v: number) => `<span class="grade grade-${gradeOf(v)}">${gradeOf(v)}</span>`;
+        const cells = runs
+          .map((r) => {
+            const cls = r.rk === 1 ? 'f1' : r.rk === 2 ? 'f2' : r.rk === 3 ? 'f3' : '';
+            return `<li class="run">
+              <div class="run-top"><span>${r.y}年${r.w}週</span><span>${r.k ? CLASS_SHORT[r.k] : ''}</span></div>
+              <a class="run-name" href="#/race/${encodeURIComponent(r.r)}">${esc(r.n)}</a>
+              <div>${esc(r.c)} ${esc(r.g)}${r.pc ? ` <span title="ペース（H ハイ・M ミドル・S スロー）">${r.pc}</span>` : ''}</div>
+              <div class="run-mid"><span class="form"><span class="fb ${cls}">${r.rk}</span></span><span>${r.f}頭${r.no}番${r.pop ? ` ${r.pop}人気` : ''}</span></div>
+              <div>${esc(r.j)} ${kgText(r.kg)}</div>
+              <div class="tnum">${formatTime(r.t)}${r.tb !== undefined ? `（${r.rk === 1 ? '−' : ''}${r.tb.toFixed(1)}）` : ''}</div>
+              <div class="tnum">${esc(r.p)} 上り${r.l3.toFixed(1)}</div>
+              <div class="tnum">${r.bw !== undefined ? `${bodyText(r.bw, r.bd)}kg` : ''}</div>
+              ${r.vs ? `<div class="run-vs">${esc(r.vs)}</div>` : ''}
+            </li>`;
+          })
+          .join('');
+        return `<article class="paper" aria-label="${e.number}番 ${esc(h.name)}">
+          <div class="paper-head">
+            <div class="paper-name">${numBadge(e.number, e.frame, 'lg')} <a href="#/horse/${h.id}">${esc(h.name)}</a></div>
+            <div class="entry-sub">${h.sex}${h.age}・${esc(h.coat)}・${STYLE_LABEL[h.style]}・${esc(h.trainer)}</div>
+            <dl class="paper-dl">
+              <dt>騎手</dt><dd>${jockeyLink(e.jockey, e.ride?.id, e.ride?.mark)} ${kgText(e.weight)}</dd>
+              <dt>馬体重</dt><dd class="tnum">${bodyText(e.body, e.bodyDiff, first)}</dd>
+              <dt>単勝</dt><dd class="tnum"><span data-odds="win:${key}">${oddsText(b, 'win', key)}</span>（<span data-pop="${key}">${pop.indexOf(key) >= 0 ? pop.indexOf(key) + 1 : '—'}</span>人気）</dd>
+              <dt>通算</dt><dd class="tnum">${career ? `${starts}戦 ${career.join('-')}-${starts - career[0] - career[1] - career[2]}` : '—'}</dd>
+              <dt>調子</dt><dd>${h.form ? conditionLabel(h.form.condition) : '—'}・${intervalText(runs, first)}${lastWorkText(e.horseId) ? `・調教 ${lastWorkText(e.horseId)}` : ''}</dd>
+              <dt>適性</dt><dd>芝${g(prof.apt.turf)} ダ${g(prof.apt.dirt)} 道悪${g(prof.apt.going)} 距離${distanceMark(prof.apt.distance, card.conditions.distance)}</dd>
+              <dt>条件別</dt><dd class="tnum" title="戦績に残っている直近10走の中での、1着-2着-3着-着外">当地 ${tallyText(t.venue)}／${now.surface === 'turf' ? '芝' : 'ダ'} ${tallyText(t.surface)}／距離 ${tallyText(t.distance)}／道悪 ${tallyText(t.soft)}</dd>
+            </dl>
+            ${notes.length ? `<p class="paper-notes">${notes.map((x) => `<span>${esc(x)}</span>`).join('')}</p>` : ''}
+          </div>
+          ${runs.length ? `<ol class="paper-runs" aria-label="過去5走（左が前走）">${cells}</ol>` : `<p class="muted paper-empty">${first ? '初出走です。' : '近走の記録がありません（ゲーム開始より前の成績は持っていません）。'}</p>`}
+        </article>`;
+      })
+      .join('');
+    return `
+      <p class="muted" style="font-size:.82rem">各馬の過去5走（左が前走）。1走の中身は、上から 日付・クラス／レース名／コース・馬場・ペース／着順・頭数・馬番・人気／騎手・斤量／走破時計（1着との差。勝ったときは2着との差）／通過順・上がり3F／馬体重（増減）／相手の馬（勝ったときは2着馬、それ以外は1着馬）。条件別は直近10走の中での 1着-2着-3着-着外（距離は今回の ±200m）。</p>
+      ${rows}
+      <p class="muted" style="font-size:.82rem">予想の印はありません。馬体重は 2kg 単位で、疲労・仕上がり・休み明け・成長を映します。</p>`;
   };
 
   const oddsTab = () => {
@@ -281,16 +363,29 @@ export function racePage(raceId: string): Page {
     // 締切後は確定プールから計算されるため、確定オッズ・確定人気になる
     const winOdds = rt.finalPools ? currentOddsBook(store.state, card, probs() ?? store.probsSync(card), store.now()) : null;
     const finalPop = winOdds ? popularity(winOdds, 'win') : [];
+    const l3Best = res.last3F.indexOf(Math.min(...res.last3F));
+    // このレースが初出走だったか（戦績の記録から）
+    const wasFirstRun = (id: string) => {
+      const wh = findHorse(store.state.world, id);
+      return !!wh && wh.career.starts - (wh.history.some((r) => r.r === card.id) ? 1 : 0) <= 0;
+    };
+    const comments = postRaceComments(card, res);
+    const commentHtml = (cs: typeof comments) =>
+      cs.map((c) => `<li><b>${c.rank}着 ${c.number}番 ${esc(c.name)}</b>（${esc(c.jockey)} 騎手）<br>「${esc(c.text)}」</li>`).join('');
     const rows = res.order
       .map((i, rank) => {
         const e = card.entries[i];
         const h = horseOf(e);
-        return `<tr><td><b>${rank + 1}</b></td><td>${numBadge(e.number, e.frame)}</td>
-          <td class="entry-name"><a href="#/horse/${h.id}">${esc(h.name)}</a><div class="entry-sub">${jockeyLink(e.jockey, e.ride?.id, e.ride?.mark)}・${STYLE_LABEL[h.style]}</div></td>
+        return `<tr><td><b>${rank + 1}</b></td><td class="tnum">${e.frame}</td><td>${numBadge(e.number, e.frame)}</td>
+          <td class="entry-name"><a href="#/horse/${h.id}">${esc(h.name)}</a></td>
+          <td>${h.sex}${h.age}</td><td class="r tnum">${kgText(e.weight)}</td>
+          <td>${jockeyLink(e.jockey, e.ride?.id, e.ride?.mark)}</td>
           <td class="tnum">${formatTime(res.finishTimes[i])}</td><td class="tnum">${res.margins[i]}</td>
-          <td class="r tnum hide-sm">${res.last3F[i].toFixed(1)}</td>
+          <td class="tnum">${res.cornerOrders.map((c) => c.order.indexOf(i) + 1).join('-')}</td>
+          <td class="r tnum${l3Best === i ? ' best' : ''}">${res.last3F[i].toFixed(1)}</td>
           <td class="r tnum">${winOdds ? oddsText(winOdds, 'win', String(e.number)) : '—'}</td>
-          <td class="r hide-sm">${finalPop.indexOf(String(e.number)) + 1 || '—'}</td></tr>`;
+          <td class="r tnum">${finalPop.indexOf(String(e.number)) + 1 || '—'}</td>
+          <td class="r tnum">${bodyText(e.body, e.bodyDiff, wasFirstRun(e.horseId))}</td></tr>`;
       })
       .join('');
     const payouts = BET_TYPES.flatMap((t) =>
@@ -326,11 +421,16 @@ export function racePage(raceId: string): Page {
       </section>
       <h2>確定 — ${PACE_LABEL[res.pace]}</h2>
       <p class="muted" style="font-size:.85rem">前半3F ${res.first3F.toFixed(1)}／後半3F ${res.final3F.toFixed(1)}／ラップ ${res.splits.map((s) => s.toFixed(1)).join('-')}</p>
-      <div class="table-wrap"><table class="table">
+      <p class="muted" style="font-size:.85rem">天候 ${WEATHER_LABEL[card.conditions.weather]}・${card.conditions.surface === 'turf' ? '芝' : 'ダート'} ${GOING_LABEL[card.conditions.going]}${trackText(card) ? `（${trackText(card)}）` : ''}</p>
+      <div class="table-wrap"><table class="table nowrap result-table">
         <caption class="sr-only">着順</caption>
-        <thead><tr><th>着</th><th>馬番</th><th>馬名</th><th>タイム</th><th>着差</th><th class="r hide-sm">上がり3F</th><th class="r">単勝</th><th class="r hide-sm">人気</th></tr></thead>
+        <thead><tr><th>着</th><th>枠</th><th>馬番</th><th>馬名</th><th>性齢</th><th class="r">斤量</th><th>騎手</th><th>タイム</th><th>着差</th><th title="各コーナーの通過順位">通過</th><th class="r" title="最後の600mのタイム。色付きは最速">上がり3F</th><th class="r">単勝</th><th class="r">人気</th><th class="r" title="馬体重 (kg) と前走からの増減">馬体重</th></tr></thead>
         <tbody>${rows}</tbody></table></div>
-      <p class="muted" style="font-size:.85rem">通過順：${res.cornerOrders.map((c) => `${c.corner}角 ${c.order.map((i) => card.entries[i].number).join('-')}`).join('／')}</p>
+      <h3 style="margin-top:12px">レース後のコメント</h3>
+      <ul class="comments">${commentHtml(comments.slice(0, 3))}</ul>
+      ${comments.length > 3 ? `<details><summary>4着以下のコメント</summary><ul class="comments" style="margin-top:8px">${commentHtml(comments.slice(3))}</ul></details>` : ''}
+      <p class="muted" style="font-size:.8rem">コメントは、このレースの計算の記録（出遅れ・位置取り・ペース・上がり・馬体重など）から自動で作った架空の談話です。</p>
+      <p class="muted" style="font-size:.85rem">コーナー通過順：${res.cornerOrders.map((c) => `${c.corner}角 ${c.order.map((i) => card.entries[i].number).join('-')}`).join('／')}</p>
       <h3>払戻（100コインあたり）</h3>
       <div class="table-wrap"><table class="table"><thead><tr><th>券種</th><th>組番</th><th class="r">払戻</th><th class="r">オッズ</th></tr></thead><tbody>${payouts}</tbody></table></div>
       ${
@@ -518,6 +618,8 @@ export function racePage(raceId: string): Page {
         return cardTab();
       case 'bet':
         return betPanel();
+      case 'paper':
+        return paperTab();
       case 'odds':
         return oddsTab();
       case 'feed':

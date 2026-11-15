@@ -90,6 +90,11 @@ export interface RunRecord {
   kg?: number;
   tb?: number;
   pz?: number;
+  /** 馬体重 (kg)・前走からの増減・ペース（H/M/S）・相手（勝ったときは2着馬、負けたときは1着馬）の名前。第10段階から */
+  bw?: number;
+  bd?: number;
+  pc?: string;
+  vs?: string;
 }
 
 export interface Career {
@@ -422,8 +427,12 @@ export interface RaceResultForWorld {
   goingIndex: number;
   /** 条件（クラス・賞金）。ない場合（古い出走表）は収得賞金・本賞金を加えない */
   terms?: RaceTerms;
+  /** ペース（H/M/S）と、1着・2着の馬名（第10段階から） */
+  pace?: string;
+  first?: string;
+  second?: string;
   /** 出走馬ごと（馬番順でなくてよい） */
-  runners: { horseId: string; number: number; rank: number; time: number; margin: string; last3F: number; passing: string; jockey: string; jockeyId?: string; kakari?: boolean; odds?: number; popularity?: number; weight?: number }[];
+  runners: { horseId: string; number: number; rank: number; time: number; margin: string; last3F: number; passing: string; jockey: string; jockeyId?: string; kakari?: boolean; odds?: number; popularity?: number; weight?: number; body?: number; bodyDiff?: number }[];
 }
 
 /** レース結果を各馬の戦績に記録する */
@@ -455,6 +464,10 @@ export function recordRace(world: World, res: RaceResultForWorld): World {
       ...(res.terms ? { k: res.terms.cls } : {}),
       ...(r.weight !== undefined ? { kg: r.weight } : {}),
       tb: Math.round((r.time - winTime) * 10) / 10,
+      ...(r.body !== undefined ? { bw: r.body } : {}),
+      ...(r.bodyDiff !== undefined ? { bd: r.bodyDiff } : {}),
+      ...(res.pace ? { pc: res.pace } : {}),
+      ...((r.rank === 1 ? res.second : res.first) ? { vs: r.rank === 1 ? res.second : res.first } : {}),
     };
     const prize = res.terms ? prizeFor(res.terms.prize, r.rank) : 0;
     if (prize > 0) rec.pz = prize;

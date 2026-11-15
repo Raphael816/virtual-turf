@@ -28,6 +28,7 @@ import { VENUES, type Layout, type VenueId } from '../data/venues';
 import { RAIL_LABEL, initialTracks, raceDaySky, wearOf } from './weather';
 import { type Jockey, type Ride, JOCKEY_LIST, allowanceOf, careerWins, makeRide, rating, yearsOf } from './jockey';
 import { START_YEAR } from './world';
+import { bodyWeight } from './bodyweight';
 import { Rng, secureSeed, sha256Hex } from './rng';
 import {
   ENGINE_VERSION,
@@ -52,6 +53,9 @@ export interface RaceEntry {
   ride?: Ride;
   /** 負担重量 (kg)。第5段階から（古い出走表にはない） */
   weight?: number;
+  /** 馬体重 (kg) と前走からの増減（第10段階から。前走の記録がないときは増減なし） */
+  body?: number;
+  bodyDiff?: number;
   /**
    * 出走時点の能力の写し。馬の能力は年月とともに変わるため、レースの計算・検証はこの値で行う。
    * 古い保存データ（写しがない出走表）は既存の36頭のデータを使う。
@@ -224,6 +228,7 @@ function toEntries(
   weightOf: (h: Horse, i: number) => number | undefined,
   keepSnapshot: boolean,
   rideOf?: (h: Horse, i: number) => { name: string; ride: Ride } | undefined,
+  bodyOf?: (h: Horse, i: number) => { body: number; bodyDiff?: number } | undefined,
 ): RaceEntry[] {
   const order = rng.shuffle(chosen.map((h, i) => ({ h, i })));
   const jockeys = rng.shuffle([...JOCKEYS]);
@@ -238,6 +243,7 @@ function toEntries(
       ...(r ? { ride: r.ride } : {}),
       // 減量（見習騎手・女性騎手）は負担重量から引く
       ...(weight !== undefined ? { weight: weight - (r?.ride.allowance ?? 0) } : {}),
+      ...(bodyOf?.(h, i) ?? {}),
       ...(keepSnapshot ? { horse: h } : {}),
     };
   });
@@ -407,7 +413,13 @@ function draftProgram(meetingId: string, world: World): Draft[] {
       temp: sk.temp,
     };
     const rides = assignJockeys(rng, chosen, world, terms, conditions);
-    bySlot.set(r, { name, conditions, terms, entries: toEntries(rng, snaps, (_h, i) => weightOf[i], true, (_h, i) => rides[i]) });
+    // 馬体重（bodyweight.ts）。乱数は別の系列を使うので、出走馬・枠順の決まり方は変わらない
+    const bodies = chosen.map((h) => {
+      const body = bodyWeight(h, date, meetingId);
+      const prev = h.history[0]?.bw;
+      return { body, ...(prev !== undefined ? { bodyDiff: body - prev } : {}) };
+    });
+    bySlot.set(r, { name, conditions, terms, entries: toEntries(rng, snaps, (_h, i) => weightOf[i], true, (_h, i) => rides[i], (_h, i) => bodies[i]) });
   }
   for (let r = 0; r < SLOTS.length; r++) {
     const d = bySlot.get(r);

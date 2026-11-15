@@ -6,7 +6,7 @@
  */
 import { appendAudit } from './audit';
 import { BET_TYPE_BY_ID, type BetTypeId } from './bettypes';
-import { type RaceCard, createMeeting, runRace } from './meeting';
+import { type RaceCard, createMeeting, entryHorse, runRace } from './meeting';
 import { type Pools, buildOddsBook, marketPools, poolTotal, settleOdds, standardOdds, withStakes } from './pool';
 import { GOING_INDEX, GOING_LABEL, type SimResult, courseShort } from './sim';
 import { type RaceResultForWorld, type World, advanceWeek, recordRace } from './world';
@@ -161,8 +161,13 @@ export function resultForWorld(card: RaceCard, res: SimResult, pools?: Pools): R
     distance: card.conditions.distance,
     goingIndex: GOING_INDEX[card.conditions.going],
     ...(card.terms ? { terms: card.terms } : {}),
+    pace: { high: 'H', middle: 'M', slow: 'S' }[res.pace],
+    first: entryHorse(card.entries[res.order[0]]).name,
+    ...(res.order.length > 1 ? { second: entryHorse(card.entries[res.order[1]]).name } : {}),
     runners: card.entries.map((e, i) => ({
       ...(e.weight !== undefined ? { weight: e.weight } : {}),
+      ...(e.body !== undefined ? { body: e.body } : {}),
+      ...(e.bodyDiff !== undefined ? { bodyDiff: e.bodyDiff } : {}),
       kakari: res.factors[i].kakari,
       horseId: e.horseId,
       number: e.number,
