@@ -14,7 +14,8 @@ import { generateExtended } from './ability';
 import { GROWTH_KEYS, type Life, type RaceForm, afterRace, bioAge, conditionOf, currentAbilities, initLife, retireProbability, weeklyRecovery } from './lifecycle';
 import { npcPlan, train } from './training';
 import { type ClassId, type RaceTerms, earningsAdd, prizeFor } from './raceclass';
-import { MAIDEN3_LAST_WEEK } from './program';
+import { MAIDEN3_LAST_WEEK, venueOfWeek } from './program';
+import { type TrackStates, advanceTracks, initialTracks } from './weather';
 import { Rng } from './rng';
 
 export const WEEKS_PER_YEAR = 52;
@@ -117,12 +118,14 @@ export interface WorldHorse extends Horse {
 }
 
 export interface World {
-  /** 2：生涯の状態（life）を追加、3：収得賞金・クラス（第5段階） */
-  schema: 3;
+  /** 2：生涯の状態（life）を追加、3：収得賞金・クラス（第5段階）、4：馬場の状態（第7段階） */
+  schema: 4;
   date: GameDate;
   /** これまでに開いた開催日の数 */
   meetings: number;
   horses: WorldHorse[];
+  /** 競馬場ごとの含水率・開催日数・使用コース（第7段階） */
+  tracks: TrackStates;
 }
 
 export function ageOf(h: Pick<WorldHorse, 'birthYear'>, date: GameDate): number {
@@ -217,7 +220,7 @@ export function createWorld(extra = 664): World {
     if (!name) break;
     horses.push(toWorldHorse(generateHorse(rng, `g${String(horses.length).padStart(4, '0')}`, name), date, true));
   }
-  return { schema: 3, date, meetings: 0, horses: assignInitialClasses(horses, date) };
+  return { schema: 4, date, meetings: 0, horses: assignInitialClasses(horses, date), tracks: initialTracks() };
 }
 
 /** 能力の総合点（初期のクラス分けの順位づけに使う） */
@@ -278,7 +281,7 @@ export function earningsFromWins(wins: number): number {
 
 /** 生涯の状態がない古い競馬界（schema 1）を移行する（今の能力を現在の値とし、上限を逆算） */
 export function upgradeWorld(w: World | (Omit<World, 'schema'> & { schema: number })): World {
-  if (w.schema === 3) return w as World;
+  if (w.schema === 4) return w as World;
   let horses = (w.horses as (Omit<WorldHorse, 'life' | 'earnings'> & { life?: Life; earnings?: number })[]).map((h) => ({
     ...h,
     life: h.life ?? initLife(h, bioAge(h.birthYear, w.date), h.id),
@@ -294,7 +297,8 @@ export function upgradeWorld(w: World | (Omit<World, 'schema'> & { schema: numbe
       career: { ...h.career, prize: h.career.prize ?? 0 },
     }));
   }
-  return { ...(w as World), schema: 3, horses };
+  // 馬場の状態（schema 4）：乾いた状態から始める
+  return { ...(w as World), schema: 4, horses, tracks: (w as Partial<World>).tracks ?? initialTracks() };
 }
 
 // ---------------------------------------------------------------- 進行
@@ -341,8 +345,10 @@ export function advanceWeek(world: World): World {
     return { ...h, ...cur, life };
   });
   if (date.week === 1) horses = yearStart(horses, date);
+  // 天候と馬場：前の開催日から今度の開催日の朝まで（全場）。今週の開催場は開催日数・使用コースを進める
+  const tracks = advanceTracks(world.tracks ?? initialTracks(), world.date, date, venueOfWeek(date.week));
   if (date.week === MAIDEN3_LAST_WEEK + 1) horses = maidenCutoff(horses, date);
-  return { ...world, date, meetings: world.meetings + 1, horses };
+  return { ...world, date, meetings: world.meetings + 1, horses, tracks };
 }
 
 /**

@@ -25,6 +25,7 @@ import {
 } from './raceclass';
 import { type ProgramAlt, type ProgramSlot, SLOTS, SPECIAL_NAMES, altsFor, distanceOptions, stakesOfWeek, venueOfWeek } from './program';
 import { VENUES, type Layout, type VenueId } from '../data/venues';
+import { RAIL_LABEL, initialTracks, raceDaySky, wearOf } from './weather';
 import { Rng, secureSeed, sha256Hex } from './rng';
 import {
   ENGINE_VERSION,
@@ -100,7 +101,7 @@ const PLAN: RacePlan[] = [
 
 const WEATHERS: Weather[] = ['sunny', 'cloudy', 'drizzle', 'rain'];
 const GOINGS: Going[] = ['good', 'yielding', 'soft', 'heavy'];
-const MOISTURE: Record<Weather, number> = { sunny: 0, cloudy: 0.4, drizzle: 1.4, rain: 2.4 };
+const MOISTURE: Record<Weather, number> = { sunny: 0, cloudy: 0.4, drizzle: 1.4, rain: 2.4, lightsnow: 1.4, snow: 2.4 };
 const GRADE_WEIGHT: Record<Grade, number> = { A: 4, B: 3, C: 1.2, D: 0.12 };
 
 /** 馬番から枠番を求める（頭数が8を超えると外枠から2頭ずつ入る） */
@@ -258,11 +259,13 @@ function draftProgram(meetingId: string, world: World): Draft[] {
   const rng = new Rng(`meeting:${meetingId}`);
   const date = world.date;
   const month = monthOf(date);
-  const sky = weatherSequence(rng, SLOTS.length);
+  const venue = venueOfWeek(date.week);
+  const track = (world.tracks ?? initialTracks())[venue];
+  // 天候と馬場（weather.ts）：開催日の朝の含水率から、レースごとに
+  const skies = raceDaySky(track, venue, date, SLOTS.length, meetingId);
   const used = new Set<string>();
   const names = rng.shuffle([...SPECIAL_NAMES]);
   const avail = eligibleHorses(world);
-  const venue = venueOfWeek(date.week);
   const drafts: Draft[] = [];
 
   // メインレース（重賞）を先に組む（有力馬を先に確保するため）。出走表の順番は 1R〜8R のまま
@@ -339,7 +342,25 @@ function draftProgram(meetingId: string, world: World): Draft[] {
     chosen.forEach((h) => used.add(h.id));
     const weightOf = entryWeights(terms, chosen, world, distance);
     const snaps = chosen.map((h) => snapshot(h, date));
-    const conditions: RaceConditions = { surface, ...(surface === 'turf' && layout ? { layout } : {}), distance, ...sky[r], timeOfDay, month, venue };
+    const sk = skies[r];
+    const conditions: RaceConditions = {
+      surface,
+      ...(surface === 'turf' && layout ? { layout } : {}),
+      distance,
+      weather: sk.weather,
+      going: surface === 'turf' ? sk.turfGoing : sk.dirtGoing,
+      timeOfDay,
+      month,
+      venue,
+      turfGoing: sk.turfGoing,
+      dirtGoing: sk.dirtGoing,
+      moisture: { turf: sk.turf, dirt: sk.dirt },
+      cushion: sk.cushion,
+      wear: Math.round(wearOf(track) * 100) / 100,
+      rail: RAIL_LABEL[track.rail],
+      meetDay: track.day,
+      temp: sk.temp,
+    };
     bySlot.set(r, { name, conditions, terms, entries: toEntries(rng, snaps, (_h, i) => weightOf[i], true) });
   }
   for (let r = 0; r < SLOTS.length; r++) {

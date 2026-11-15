@@ -16,13 +16,13 @@ import { type Surface, cornersOnRoute, courseFor, courseTraits, curvatureAt, gra
  * 3.1.0: 出走時点の状態（調子・疲労・精神的疲労）を計算に入れる
  * 3.0.0: 能力・適性を拡張（持続力・操縦性・健康・距離の幅・回り・坂・小回り・直線・季節）、脚質の位置取りを展開で変える
  */
-export const ENGINE_VERSION = 'sim-3.3.0';
+export const ENGINE_VERSION = 'sim-3.4.0';
 
-export type Weather = 'sunny' | 'cloudy' | 'drizzle' | 'rain';
+export type Weather = 'sunny' | 'cloudy' | 'drizzle' | 'rain' | 'lightsnow' | 'snow';
 export type Going = 'good' | 'yielding' | 'soft' | 'heavy';
 export type TimeOfDay = 'day' | 'dusk' | 'night';
 
-export const WEATHER_LABEL: Record<Weather, string> = { sunny: '晴', cloudy: '曇', drizzle: '小雨', rain: '雨' };
+export const WEATHER_LABEL: Record<Weather, string> = { sunny: '晴', cloudy: '曇', drizzle: '小雨', rain: '雨', lightsnow: '小雪', snow: '雪' };
 export const GOING_LABEL: Record<Going, string> = { good: '良', yielding: '稍重', soft: '重', heavy: '不良' };
 export const TIME_LABEL: Record<TimeOfDay, string> = { day: 'デイ', dusk: '薄暮', night: 'ナイター' };
 export const SURFACE_LABEL: Record<Surface, string> = { turf: '芝', dirt: 'ダート' };
@@ -49,6 +49,15 @@ export interface RaceConditions {
   month?: number;
   /** 競馬場（第6段階から。ない場合は中山） */
   venue?: VenueId;
+  /** 第7段階から：芝・ダートそれぞれの馬場状態と含水率 (%)、芝のクッション値、内外の差（0〜1）、使用コース（A〜）、開催日数、気温 */
+  turfGoing?: Going;
+  dirtGoing?: Going;
+  moisture?: { turf: number; dirt: number };
+  cushion?: number;
+  wear?: number;
+  rail?: string;
+  meetDay?: number;
+  temp?: number;
 }
 
 export interface SimRunner {
@@ -205,8 +214,12 @@ export function simulateRace(cond: RaceConditions, runners: SimRunner[], seed: s
 
   // 距離による速さ（推定の較正）：短距離ほど道中が速い。JRA の良馬場の一般的な走破時計の目安に合わせる（docs/11-venues.md）
   const distSpeed = interp(DIST_SPEED, D);
-  // 北海道（札幌・函館）の洋芝は、野芝より時計がかかる（公式のコース紹介）
-  const grassSpeed = cond.surface === 'turf' && cond.venue && VENUES[cond.venue].grass === '洋芝' ? 0.994 : 1;
+  // 北海道（札幌・函館）の洋芝は、野芝より時計がかかる（公式のコース紹介）。
+  // 第7段階からはクッション値で表す（硬いほど速い：1 につき 0.4%。推定）。クッション値のない古いレースは以前どおり
+  const grassSpeed =
+    cond.surface !== 'turf' ? 1 : cond.cushion !== undefined ? 1 + 0.004 * (cond.cushion - 9.6) : cond.venue && VENUES[cond.venue].grass === '洋芝' ? 0.994 : 1;
+  // 内外の差：内側の芝が傷んでいるほど、内ラチ沿い（6m 以内）が遅い（最大 0.4%。重い馬場ほど大きい。推定）
+  const wearPenalty = cond.surface === 'turf' && cond.wear ? 0.004 * cond.wear * (1 + GOING_INDEX[cond.going] / 3) : 0;
 
   // ---- 馬ごとのパラメータ（能力・適性の効き方は ability.ts。乱数の消費順は固定） ----
   const traits = courseTraits(course);
@@ -383,7 +396,7 @@ export function simulateRace(cond: RaceConditions, runners: SimRunner[], seed: s
       const uNow = raceU(course, D, xPrev[i]);
       const grade = gradeAt(course, uNow);
       const fatigue = S[i] >= p.fadeThreshold ? 1 : TUNE.fadeFloor + ((1 - TUNE.fadeFloor) * S[i]) / p.fadeThreshold;
-      const vMax = p.vTop * fatigue;
+      const vMax = p.vTop * fatigue * (wearPenalty > 0 ? 1 - wearPenalty * Math.max(0, 1 - lane[i] / 6) : 1);
       const kakariActive = p.kakari && t >= p.kakariStart && t < p.kakariEnd;
       if (p.kakari && Math.abs(t - p.kakariStart) < dt / 2) events.push({ t, type: 'kakari', runner: i });
 

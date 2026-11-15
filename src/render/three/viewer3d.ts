@@ -224,7 +224,8 @@ export class Viewer3D implements RaceViewer {
     this.applyRollout();
     this.lateral = card.entries.map(() => 0);
     this.env.applyConditions(c.weather, c.timeOfDay, c.going, [`${card.no}R ${card.name}`, courseShort(c)]);
-    this.rain.setIntensity(c.weather === 'rain' ? 2 : c.weather === 'drizzle' ? 1 : 0);
+    // 雪は降る様子をまだ描いていない（雨の粒で弱めに表す。映像の段階で雪片にする）
+    this.rain.setIntensity(c.weather === 'rain' ? 2 : c.weather === 'drizzle' || c.weather === 'snow' ? 1 : c.weather === 'lightsnow' ? 1 : 0);
     this.wet = c.going === 'soft' || c.going === 'heavy';
     if (c.surface === 'dirt') {
       this.dustColor.set(this.wet ? '#5e4c3c' : c.going === 'yielding' ? '#9c8064' : '#c4a27c');

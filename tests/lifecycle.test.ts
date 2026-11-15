@@ -146,10 +146,10 @@ describe('保存データの移行', () => {
     const s = await createInitialState(0);
     const old = { ...s.world, schema: 1, horses: s.world.horses.map(({ life: _l, ...h }) => h) };
     const w = upgradeWorld(old as unknown as World);
-    expect(w.schema).toBe(3);
+    expect(w.schema).toBe(4);
     expect(w.horses.every((h) => h.life && h.life.pot.speed > 0)).toBe(true);
     const m = migrate(JSON.parse(JSON.stringify({ ...s, world: old })))!;
-    expect(m.world.schema).toBe(3);
+    expect(m.world.schema).toBe(4);
   });
   it('年齢の計算：JRA の馬齢は1月に加算、生後の年数は春生まれとして数える', () => {
     expect(bioAge(2024, { year: 2026, week: 1 })).toBeCloseTo(1.7, 1);

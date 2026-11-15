@@ -22,6 +22,7 @@ import {
   conditionText,
   kgText,
   prizeText,
+  trackText,
   formBadges,
   horseOf,
   intervalText,
@@ -571,6 +572,7 @@ export function racePage(raceId: string): Page {
       <nav aria-label="パンくず" class="muted" style="font-size:.85rem;margin-bottom:4px"><a href="#/races">レース一覧</a> › ${card.no}R</nav>
       <div class="race-head"><h1>${raceTitle(card)}</h1><span data-head-status></span></div>
       <p class="race-meta" style="margin-bottom:${card.terms ? 2 : 12}px">${surfaceChip(card)} ${conditionText(card)}</p>
+      ${trackText(card) ? `<p class="race-meta" style="margin-bottom:2px" title="含水率・クッション値は JRA 公式の基準による目安。馬場状態は含水率から決まります">馬場 ${trackText(card)}</p>` : ''}
       ${card.terms ? `<p class="race-meta" style="margin-bottom:12px">本賞金（万円）${prizeText(card)}</p>` : ''}
       <div class="race-layout">
         <div>

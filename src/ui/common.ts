@@ -41,6 +41,22 @@ export function conditionText(card: RaceCard): string {
   return `${t}${WEATHER_LABEL[c.weather]}・${SURFACE_LABEL[c.surface]}${GOING_LABEL[c.going]}・${TIME_LABEL[c.timeOfDay]}・${card.entries.length}頭`;
 }
 
+/** 馬場の詳しい情報（第7段階）：芝・ダートの馬場状態と含水率、芝のクッション値、使用コースと開催日数 */
+export function trackText(card: RaceCard): string {
+  const c = card.conditions;
+  if (!c.moisture || !c.turfGoing || !c.dirtGoing) return '';
+  const cushion = c.cushion !== undefined ? `・クッション値 ${c.cushion.toFixed(1)}（${cushionLabel(c.cushion)}）` : '';
+  const rail = c.rail ? `・${c.rail}コース` : '';
+  const day = c.meetDay ? `・開催${c.meetDay}日目` : '';
+  const temp = c.temp !== undefined ? `・気温 ${c.temp.toFixed(1)}℃` : '';
+  return `芝 ${GOING_LABEL[c.turfGoing]}（含水率 ${c.moisture.turf.toFixed(1)}%${cushion}）／ダート ${GOING_LABEL[c.dirtGoing]}（含水率 ${c.moisture.dirt.toFixed(1)}%）${rail}${day}${temp}`;
+}
+
+/** クッション値の目安（JRA 公式の基準） */
+export function cushionLabel(v: number): string {
+  return v >= 12 ? '硬め' : v >= 10 ? 'やや硬め' : v >= 8 ? '標準' : v >= 7 ? 'やや軟らかめ' : '軟らかめ';
+}
+
 /** 重賞・リステッドの格付けの印 */
 export function gradeChip(card: Pick<RaceCard, 'terms'>): string {
   const c = card.terms?.cls;

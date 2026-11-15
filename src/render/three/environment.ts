@@ -913,7 +913,7 @@ export class Environment {
   /** 天候・時間帯・馬場に合わせて空・光・霧・質感を切り替える */
   applyConditions(weather: Weather, timeOfDay: TimeOfDay, going: Going, boardLines: string[]) {
     const wet = going === 'soft' || going === 'heavy';
-    const overcast = weather === 'rain' ? 1 : weather === 'drizzle' ? 0.8 : weather === 'cloudy' ? 0.55 : 0.15;
+    const overcast = weather === 'rain' || weather === 'snow' ? 1 : weather === 'drizzle' || weather === 'lightsnow' ? 0.8 : weather === 'cloudy' ? 0.55 : 0.15;
     const u = this.sky.material.uniforms;
     let elevation: number;
     let azimuth: number;
