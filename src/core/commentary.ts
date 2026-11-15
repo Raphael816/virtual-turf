@@ -72,6 +72,13 @@ export function buildCommentary(card: RaceCard, res: SimResult): CommentaryLine[
       case 'fade':
         if (nearFront()) lines.push({ t: e.t, text: say(`${name(e.runner)}は苦しくなりました。`, `${name(e.runner)}、ここで脚色が鈍ります。`), kind: 'event' });
         break;
+      case 'makuri':
+        lines.push({ t: e.t, text: say(`ペースが落ち着いたと見て、${name(e.runner)}が外から早めに進出！`, `${name(e.runner)}、後方からまくって上がっていきます！`), kind: 'event' });
+        break;
+      case 'fight':
+        if (res.order.indexOf(e.runner) < 3 || res.order.indexOf(e.other!) < 3)
+          lines.push({ t: e.t, text: say(`${name(e.runner)}と${name(e.other!)}の叩き合い！`, `${name(e.runner)}、${name(e.other!)}と馬体を併せて譲りません！`), kind: 'event' });
+        break;
       default:
         break;
     }

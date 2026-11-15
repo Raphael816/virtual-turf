@@ -77,7 +77,9 @@ export function analyzeRace(card: RaceCard, res: SimResult, favoriteNumber?: num
   if (going >= 2 && h.heavy === 'A') points.push(`${card.conditions.going === 'heavy' ? '不良' : '重'}馬場で、道悪適性Aを生かしました。`);
   if (h.power >= 85) points.push('ゴール前の急坂でも、パワーを生かして脚色が鈍りませんでした。');
   if (Math.abs(D - h.bestDistance) <= 200) points.push(`最適距離（${h.bestDistance}m前後）に近い条件も合っていました。`);
-  if (f.condition > 0.08) points.push('当日の調子も上向きでした（調子は毎レース少しずつ変動します）。');
+  if (f.condition > 0.25) points.push('当日の調子も上向きでした（調子は毎レース少しずつ変動します）。');
+  if (f.makuri) points.push('流れが落ち着いたと見て、後方から早めに動いた騎手の判断が実りました。');
+  if (f.fought) points.push('直線は馬体を併せての叩き合いとなり、勝負根性で競り勝ちました。');
   // 負担重量：出走馬の中央値より 2kg 以上軽い／重い
   const kgs = card.entries.map((e) => e.weight).filter((x): x is number => x !== undefined).sort((a, b) => a - b);
   const kgMid = kgs.length ? kgs[Math.floor((kgs.length - 1) / 2)] : undefined;
@@ -113,7 +115,7 @@ export function analyzeRace(card: RaceCard, res: SimResult, favoriteNumber?: num
     if (kgMid !== undefined && fkg !== undefined && fkg >= kgMid + 2) reasons.push(`${fkg}kgの重い負担重量もこたえ`);
     if (!reasons.length && res.pace === 'high' && (ff.style === 'nige' || ff.style === 'senko')) reasons.push('速い流れを前で受けて最後に苦しくなり');
     if (!reasons.length && res.pace === 'slow' && (ff.style === 'sashi' || ff.style === 'oikomi')) reasons.push('スローペースで前が止まらず届かず');
-    if (!reasons.length && ff.condition < -0.06) reasons.push('当日の調子がいまひとつで');
+    if (!reasons.length && ff.condition < -0.2) reasons.push('当日の調子がいまひとつで');
     const why = reasons.length ? reasons.slice(0, 2).join('、') : '勝ち馬の末脚に屈し';
     favoriteNote = `1番人気の${label(favIdx)}は、${why}${rankOf(favIdx)}着でした。`;
   }
@@ -126,6 +128,8 @@ export function analyzeRace(card: RaceCard, res: SimResult, favoriteNumber?: num
     if (fx.gaveUpLead) notes.push('ハナ争い');
     if (fx.blockedTime > 2) notes.push('詰まり');
     if (fx.staminaEnd < 0.05) notes.push('失速');
+    if (fx.makuri) notes.push('まくり');
+    if (fx.fought) notes.push('叩き合い');
     return {
       number: card.entries[i].number,
       name: horse(i).name,

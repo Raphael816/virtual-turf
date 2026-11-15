@@ -102,7 +102,8 @@ const PLAN: RacePlan[] = [
 const WEATHERS: Weather[] = ['sunny', 'cloudy', 'drizzle', 'rain'];
 const GOINGS: Going[] = ['good', 'yielding', 'soft', 'heavy'];
 const MOISTURE: Record<Weather, number> = { sunny: 0, cloudy: 0.4, drizzle: 1.4, rain: 2.4, lightsnow: 1.4, snow: 2.4 };
-const GRADE_WEIGHT: Record<Grade, number> = { A: 4, B: 3, C: 1.2, D: 0.12 };
+/** 芝・ダート適性による出走の選ばれやすさ（第8段階で、合わない条件に出にくくした） */
+const GRADE_WEIGHT: Record<Grade, number> = { A: 4, B: 2.5, C: 0.6, D: 0.05 };
 
 /** 馬番から枠番を求める（頭数が8を超えると外枠から2頭ずつ入る） */
 export function frameOf(fieldSize: number, number: number): number {
@@ -176,7 +177,8 @@ function weatherSequence(rng: Rng, n: number): { weather: Weather; going: Going 
 /** コース・距離の向き不向きと疲労による、出走の選ばれやすさ */
 function fitWeight(h: Horse, surface: 'turf' | 'dirt', distance: number): number {
   const grade = surface === 'turf' ? h.turf : h.dirt;
-  const fit = Math.exp(-(((distance - h.bestDistance) / 500) ** 2)) + 0.1;
+  // 距離：調教師は合う距離のレースを選ぶ（第8段階で、離れた距離に出にくくした）
+  const fit = Math.exp(-(((distance - h.bestDistance) / 400) ** 2)) + 0.02;
   // 疲労の残っている馬は出走を見送られやすい
   const fresh = 1 - (h.form?.fatigue ?? 0) / 100;
   return GRADE_WEIGHT[grade] * fit * fresh;

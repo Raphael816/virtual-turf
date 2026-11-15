@@ -265,7 +265,8 @@ export function raceAbility(p: HorseProfile, inp: RaceAbilityInput): RaceAbility
   const z = x / (x >= 0 ? a.distance.long : a.distance.short);
   const steep = Math.abs(z) * (1 + 0.3 * Math.max(0, Math.abs(z) - 1));
   // スタミナの差は距離が長いほど効く（マイルで 0.75 + スタミナ/200。1200mではその差が 0.75 倍、2400mでは 1.5 倍）
-  let staminaFactor = 1.125 + ((p.stamina - 75) / 200) * clamp(D / 1600, 0.5, 1.6);
+  // 第8段階：短距離ほどスタミナの差が効きにくい（距離の 1.8 乗。1,200m で 0.6 倍、1,000m で 0.43 倍）
+  let staminaFactor = 1.125 + ((p.stamina - 75) / 200) * clamp(Math.pow(D / 1600, 1.8), 0.35, 1.6);
   let distance = 0;
   if (x > 0) {
     staminaFactor *= Math.max(0.55, 1 - 0.09 * steep);
@@ -291,7 +292,8 @@ export function raceAbility(p: HorseProfile, inp: RaceAbilityInput): RaceAbility
 
   // 直線の長さ：長い直線は持続力・長い直線適性の高い馬に、短い直線は瞬発力の高い馬にわずかに有利（推定）
   const straightK = clamp((course.straight - 380) / 150, -1, 1);
-  const kick = 0.01 * straightK * ((a.longStraight - 50) / 50) + 0.008 * -straightK * ((p.burst - 75) / 25);
+  // 瞬発力そのものも末脚に効く（第8段階：直線の長さによらず 25 につき 1.2%）
+  const kick = 0.01 * straightK * ((a.longStraight - 50) / 50) + 0.008 * -straightK * ((p.burst - 75) / 25) + 0.012 * ((p.burst - 75) / 25);
 
   // 小回り：コーナー半径が小さいほど、小回り適性の低い馬はコーナーで速度を落とす
   const tightness = clamp((190 - course.turnRadius) / 80, 0, 1);
@@ -319,7 +321,8 @@ export function raceAbility(p: HorseProfile, inp: RaceAbilityInput): RaceAbility
     // 精神的疲労がたまると掛かりやすい
     kakariProb: Math.pow((100 - p.temper) / 100, 1.5) * 0.35 * (1 + (f?.mental ?? 0) / 100),
     kakariDuration: clamp(1 + (75 - p.control) / 125, 0.6, 1.5),
-    startDelay: 0.1 + ((100 - p.start) / 100) * 0.3,
+    // ゲートの上手さ：スタート反応（第8段階で幅を 0.3 → 0.5 秒に）
+    startDelay: 0.1 + ((100 - p.start) / 100) * 0.5,
     lateStartProb: 0.03 + ((100 - p.start) / 100) * 0.05 + ((100 - p.temper) / 100) * 0.02,
     positionNoise: 0.05 * clamp(1 + (75 - p.control) / 75, 0.6, 1.6),
     conditionSd: 0.06 * clamp(1 + (65 - p.health) / 120, 0.75, 1.35),
