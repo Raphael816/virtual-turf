@@ -218,7 +218,7 @@ export function horsePage(horseId: string): Page {
               ? `<ul class="race-list">${entries
                   .map(({ c, e }) => {
                     const rt = m.runtime[c.id];
-                    const fin = raceStatus(rt, now) === 'finished' && rt.order ? `${rt.order.indexOf(e!.number) + 1}着` : '';
+                    const fin = raceStatus(rt, now) === 'finished' && rt.order ? (rt.order.indexOf(e!.number) >= 0 ? `${rt.ranks?.[rt.order.indexOf(e!.number)] ?? rt.order.indexOf(e!.number) + 1}着` : '除外') : '';
                     return `<li class="race-item"><a href="#/race/${encodeURIComponent(c.id)}">
                       <span class="race-no">${c.no}R</span>
                       <span><b>${raceTitle(c)}</b><br><span class="race-meta">${surfaceChip(c)} ${conditionText(c)}・${numBadge(e!.number, e!.frame)} ${esc(e!.jockey)}</span></span>

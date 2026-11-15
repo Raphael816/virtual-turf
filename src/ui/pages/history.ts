@@ -85,7 +85,7 @@ export function historyPage(): Page {
                 .map((t) => {
                   const type = BET_TYPE_BY_ID[t.betType];
                   const atBuy = t.rangeAtPurchase ? `${t.rangeAtPurchase[0]}–${t.rangeAtPurchase[1]}` : (t.oddsAtPurchase?.toFixed(1) ?? '—');
-                  const fin = t.status === 'won' ? t.finalOdds!.toFixed(1) : t.status === 'lost' ? '不的中' : t.status === 'refunded' ? '返還' : '未確定';
+                  const fin = t.status === 'won' ? t.finalOdds!.toFixed(1) : t.status === 'lost' ? '不的中' : t.status === 'refunded' ? '返還' : t.status === 'special' ? '特払い' : '未確定';
                   return `<tr><td class="tnum">${dateTime(t.ts)}</td><td>${name(t.raceId)}</td><td>${type.label}</td>
                     <td>${t.selection.join(type.ordered ? '→' : '-')}</td><td class="r tnum">${coins(t.stake)}</td>
                     <td class="r tnum">${atBuy} → ${fin}</td><td class="r tnum ${t.status === 'won' ? 'pos' : ''}">${t.status === 'open' ? '—' : coins(t.payout ?? 0)}</td></tr>`;

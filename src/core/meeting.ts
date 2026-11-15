@@ -28,6 +28,7 @@ import { VENUES, type Layout, type VenueId } from '../data/venues';
 import { RAIL_LABEL, initialTracks, raceDaySky, wearOf } from './weather';
 import { type Jockey, type Ride, JOCKEY_LIST, allowanceOf, careerWins, makeRide, rating, yearsOf } from './jockey';
 import { START_YEAR } from './world';
+import { frameOf } from './bettypes';
 import { bodyWeight } from './bodyweight';
 import { Rng, secureSeed, sha256Hex } from './rng';
 import {
@@ -113,13 +114,7 @@ const MOISTURE: Record<Weather, number> = { sunny: 0, cloudy: 0.4, drizzle: 1.4,
 /** 芝・ダート適性による出走の選ばれやすさ（第8段階で、合わない条件に出にくくした） */
 const GRADE_WEIGHT: Record<Grade, number> = { A: 4, B: 2.5, C: 0.6, D: 0.05 };
 
-/** 馬番から枠番を求める（頭数が8を超えると外枠から2頭ずつ入る） */
-export function frameOf(fieldSize: number, number: number): number {
-  if (fieldSize <= 8) return number;
-  const singles = Math.max(0, 16 - fieldSize);
-  if (number <= singles) return number;
-  return singles + Math.ceil((number - singles) / 2);
-}
+export { frameOf };
 
 export function commitInput(raceId: string, seed: string, engineVersion = ENGINE_VERSION): string {
   return `${raceId}|${seed}|${engineVersion}`;

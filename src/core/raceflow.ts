@@ -7,11 +7,12 @@
 import { appendAudit } from './audit';
 import { BET_TYPE_BY_ID, type BetTypeId } from './bettypes';
 import { type RaceCard, createMeeting, entryHorse, runRace } from './meeting';
-import { type Pools, buildOddsBook, marketPools, poolTotal, settleOdds, standardOdds, withStakes } from './pool';
+import { type Pools, buildOddsBook, marketPools, poolTotal, settle, standardOdds, withStakes, withoutRefunded } from './pool';
+import { Rng } from './rng';
 import { GOING_INDEX, GOING_LABEL, type SimResult, courseShort } from './sim';
 import { type RaceResultForWorld, type World, advanceWeek, recordRace } from './world';
 import type { Probabilities } from './probability';
-import { type AppState, settleRace } from './state';
+import { type AppState, refundScratched, settleRace } from './state';
 
 /** デモ用の発売時間：最初のレースは開催開始の5分後、以降4分間隔 */
 export const FIRST_CLOSE_MS = 5 * 60 * 1000;
@@ -42,6 +43,46 @@ export interface RaceRuntime {
   order?: number[];
   payoutOdds?: Record<BetTypeId, Record<string, number>>;
   finishedAt?: number;
+  /** 発売開始後に出走取消・競走除外になった馬番（第11段階から。締切のときに決まる） */
+  scratched?: number[];
+  /** 同着があるときの着順（order と同じ並び。例：1,1,3） */
+  ranks?: number[];
+  /** 特払い（的中者がいなかった券種 → 払戻の率） */
+  special?: Partial<Record<BetTypeId, number>>;
+}
+
+/**
+ * 同着とみなすゴールの時間差（秒）。約 5mm に当たる（推定。JRA は写真判定で見分けられないときに同着とする）。
+ * 3着以内の同着は 1,000レースに数回の頻度になる。
+ */
+export const DEAD_HEAT_EPS = 0.0003;
+
+/** 着順（同着は同じ数）。order は着順どおりの出走馬の番号（entries の位置）、times は entries の位置ごとの走破時計 */
+export function ranksOf(order: number[], times: number[]): number[] {
+  const ranks: number[] = [];
+  order.forEach((i, k) => {
+    ranks.push(k > 0 && times[i] - times[order[k - 1]] < DEAD_HEAT_EPS ? ranks[k - 1] : k + 1);
+  });
+  return ranks;
+}
+
+/** 発売開始後の出走取消・競走除外の起こりやすさ（1頭あたり。推定） */
+export const SCRATCH_RATE = 0.003;
+
+/**
+ * 発売開始後の出走取消・競走除外（締切のときに決まる。1レースに1頭まで、6頭以上のレースだけ。簡略化）。
+ * 結果決定用の seed から決めるので、締切の前には分からない。
+ */
+export function scratchOf(card: Pick<RaceCard, 'id' | 'seed' | 'entries'>): number[] {
+  const n = card.entries.length;
+  if (n < 6) return [];
+  const rng = new Rng(`scratch:${card.id}:${card.seed}`);
+  return rng.chance(n * SCRATCH_RATE) ? [card.entries[rng.int(0, n - 1)].number] : [];
+}
+
+/** 出走取消・競走除外の馬を除いた出走表（レースの計算に使う。馬番・枠番は変わらない） */
+export function activeCard<T extends Pick<RaceCard, 'entries'>>(card: T, scratched?: number[]): T {
+  return scratched?.length ? { ...card, entries: card.entries.filter((e) => !scratched.includes(e.number)) } : card;
 }
 
 export interface MeetingState {
@@ -115,16 +156,20 @@ export async function closeRace(state: AppState, raceId: string, probs: Probabil
   const card = cardOf(m, raceId);
   const closedAt = Math.min(now, rt.closesAt);
   const numbers = card.entries.map((e) => e.number);
-  const finalPools = withStakes(
-    marketPools(card.id, numbers, probs, 1, oddsTick(rt, closedAt)),
-    state.tickets.filter((t) => t.raceId === raceId),
+  const scratched = scratchOf(card);
+  // 出走取消・競走除外の馬番を含む組合せは返還し、プールから除く
+  const finalPools = withoutRefunded(
+    withStakes(marketPools(card.id, numbers, probs, 1, oddsTick(rt, closedAt)), state.tickets.filter((t) => t.raceId === raceId)),
+    scratched,
+    numbers.length,
   );
-  const duration = Math.max(...runRace(card, card.seed, { record: false }).finishTimes) + 3;
+  const duration = Math.max(...runRace(activeCard(card, scratched), card.seed, { record: false }).finishTimes) + 3;
   const startsAt = closedAt + GATE_LOADING_MS;
   const endsAt = startsAt + duration * 1000;
   const totals = Object.fromEntries(Object.keys(finalPools).map((t) => [t, poolTotal(finalPools, t as BetTypeId)]));
-  const next = patchRuntime(state, raceId, { closedAt, closesAt: closedAt, finalPools, startsAt, endsAt });
-  return { ...next, audit: await appendAudit(next.audit, 'race_close', { race: raceId, totals }, closedAt) };
+  let next = patchRuntime(state, raceId, { closedAt, closesAt: closedAt, finalPools, startsAt, endsAt, ...(scratched.length ? { scratched } : {}) });
+  next = { ...next, audit: await appendAudit(next.audit, 'race_close', { race: raceId, totals, ...(scratched.length ? { scratched } : {}) }, closedAt) };
+  return refundScratched(next, raceId, scratched, numbers.length, closedAt);
 }
 
 /** 確定：公式シミュレーションの着順で払戻を計算し、seed を公開する */
@@ -133,22 +178,29 @@ export async function finishRace(state: AppState, raceId: string, now: number): 
   const rt = m.runtime[raceId];
   if (rt.finishedAt !== undefined || !rt.finalPools || rt.endsAt === undefined) return state;
   const card = cardOf(m, raceId);
-  const res = runRace(card, card.seed, { record: false });
-  const order = res.order.map((i) => card.entries[i].number);
-  const payoutOdds = settleOdds(rt.finalPools, order, order.length);
+  const run = activeCard(card, rt.scratched);
+  const res = runRace(run, card.seed, { record: false });
+  const order = res.order.map((i) => run.entries[i].number);
+  const ranks = ranksOf(res.order, res.finishTimes);
+  const tie = ranks.some((r, k) => r !== k + 1);
+  // 発売する券種・複勝の対象・枠番は、発売開始時の頭数で決まる（JRA 公式）
+  const st = settle(rt.finalPools, order, card.entries.length, tie ? ranks : undefined);
+  const payoutOdds = st.odds;
   const finishedAt = Math.max(now, rt.endsAt);
-  let next = patchRuntime(state, raceId, { order, payoutOdds, finishedAt });
+  // 確定後は、組合せの多い券種（3連複・3連単）のプールを保存しない（保存容量のため。払戻は payoutOdds に残る）
+  const kept = { ...rt.finalPools, trio: {}, trifecta: {} };
+  let next = patchRuntime(state, raceId, { order, payoutOdds, finishedAt, finalPools: kept, ...(tie ? { ranks } : {}), ...(Object.keys(st.special).length ? { special: st.special } : {}) });
   next = {
     ...next,
     audit: await appendAudit(next.audit, 'race_result', { race: raceId, order, seed: card.seed, commit: card.commit }, finishedAt),
     // 各馬の戦績に記録する
-    world: next.world ? recordRace(next.world, resultForWorld(card, res, rt.finalPools)) : next.world,
+    world: next.world ? recordRace(next.world, resultForWorld(run, res, rt.finalPools, tie ? ranks : undefined)) : next.world,
   };
-  return settleRace(next, raceId, payoutOdds, finishedAt);
+  return settleRace(next, raceId, payoutOdds, finishedAt, st.special);
 }
 
 /** レース結果を、各馬の戦績に記録する形にまとめる（確定オッズ・人気はプールがあれば付ける） */
-export function resultForWorld(card: RaceCard, res: SimResult, pools?: Pools): RaceResultForWorld {
+export function resultForWorld(card: RaceCard, res: SimResult, pools?: Pools, ranks?: number[]): RaceResultForWorld {
   const win = BET_TYPE_BY_ID.win;
   const odds = card.entries.map((e) => (pools ? standardOdds(win, pools, String(e.number)) : null));
   const popOrder = card.entries.map((_, i) => i).filter((i) => odds[i] !== null).sort((a, b) => odds[a]! - odds[b]!);
@@ -171,7 +223,7 @@ export function resultForWorld(card: RaceCard, res: SimResult, pools?: Pools): R
       kakari: res.factors[i].kakari,
       horseId: e.horseId,
       number: e.number,
-      rank: res.order.indexOf(i) + 1,
+      rank: ranks ? ranks[res.order.indexOf(i)] : res.order.indexOf(i) + 1,
       time: res.finishTimes[i],
       margin: res.margins[i],
       last3F: res.last3F[i],

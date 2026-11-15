@@ -5,8 +5,8 @@
  * デモコインは購入・換金・譲渡ができず、金銭的な価値はない。
  */
 import { type AuditEntry, appendAudit } from './audit';
-import { BET_TYPE_BY_ID, type BetTypeId, betKey, validateSelection } from './bettypes';
-import { type OddsBook, payout } from './pool';
+import { BET_TYPE_BY_ID, type BetTypeId, betKey, isRefunded, validateSelection } from './bettypes';
+import { type OddsBook, payout, rangeOf } from './pool';
 import type { MeetingState } from './raceflow';
 import { type World, createWorld } from './world';
 import { type CheckResult, DEFAULT_LIMITS, type Limits, activeRestriction, checkBet, dayKey } from './responsible';
@@ -30,8 +30,11 @@ export interface LedgerEntry {
   ticketId?: string;
 }
 
-/** refunded：レースが実施されなかった（エンジン更新で開催を作り直した等）ため返還 */
-export type TicketStatus = 'open' | 'won' | 'lost' | 'refunded';
+/**
+ * refunded：返還（レースが実施されなかった、または選んだ馬が出走取消・競走除外になった）
+ * special：特払い（その券種に的中者がいなかったため、投票額の 80% または 70% を払い戻す）
+ */
+export type TicketStatus = 'open' | 'won' | 'lost' | 'refunded' | 'special';
 
 export interface Ticket {
   id: string;
@@ -127,7 +130,7 @@ export function quoteBet(
   const selectionError = validateSelection(type, req.selection, numbers);
   const key = selectionError ? '' : betKey(type, req.selection);
   const odds = key ? (book.odds[type.id][key] ?? null) : null;
-  const range = type.poolKind === 'place' && key ? (book.placeRange[key] ?? null) : null;
+  const range = key ? rangeOf(book, type.id, key) : null;
   let estPayout: [number, number] | null = null;
   if (range) estPayout = [payout(req.stake, range[0]), payout(req.stake, range[1])];
   else if (odds !== null) estPayout = [payout(req.stake, odds), payout(req.stake, odds)];
@@ -195,8 +198,10 @@ export async function placeBet(
 export async function settleRace(
   state: AppState,
   raceId: string,
-  payoutOdds: Record<BetTypeId, Record<string, number>>,
+  payoutOdds: Partial<Record<BetTypeId, Record<string, number>>>,
   ts: number,
+  /** 特払い（的中者がいなかった券種 → 払戻の率） */
+  special: Partial<Record<BetTypeId, number>> = {},
 ): Promise<AppState> {
   let balance = state.balance;
   const ledger = [...state.ledger];
@@ -205,6 +210,14 @@ export async function settleRace(
   const tickets = state.tickets.map((t) => {
     if (t.raceId !== raceId || t.status !== 'open') return t;
     totalStake += t.stake;
+    const rate = special[t.betType];
+    if (rate !== undefined) {
+      const amount = payout(t.stake, rate);
+      balance += amount;
+      totalPayout += amount;
+      ledger.push({ id: newId('l', ts), ts, kind: 'payout', amount, balance, raceId, ticketId: t.id });
+      return { ...t, status: 'special' as const, finalOdds: rate, payout: amount, settledAt: ts };
+    }
     const odds = payoutOdds[t.betType]?.[t.key];
     if (odds === undefined) return { ...t, status: 'lost' as const, payout: 0, settledAt: ts };
     const amount = payout(t.stake, odds);
@@ -240,6 +253,27 @@ export async function refundRaces(state: AppState, raceIds: string[], ts: number
 }
 
 /** 残高が少ないときの補充（1日1回・休止中や自己排除中は不可） */
+/**
+ * 出走取消・競走除外になった馬番を含む券を返還する（JRA の返還の決まり。bettypes.ts の isRefunded）。
+ * 電話・インターネット投票と同じく、発表後すぐに返還する。
+ */
+export async function refundScratched(state: AppState, raceId: string, scratched: number[], fieldSize: number, ts: number): Promise<AppState> {
+  if (!scratched.length) return state;
+  let balance = state.balance;
+  const ledger = [...state.ledger];
+  let total = 0;
+  const tickets = state.tickets.map((t) => {
+    if (t.raceId !== raceId || t.status !== 'open' || !isRefunded(BET_TYPE_BY_ID[t.betType], t.key, scratched, fieldSize)) return t;
+    balance += t.stake;
+    total += t.stake;
+    ledger.push({ id: newId('l', ts), ts, kind: 'refund', amount: t.stake, balance, raceId, ticketId: t.id });
+    return { ...t, status: 'refunded' as const, payout: t.stake, settledAt: ts };
+  });
+  if (total === 0) return state;
+  const audit = await appendAudit(state.audit, 'refund', { races: [raceId], amount: total, reason: `出走取消・競走除外（${scratched.join('・')}番）` }, ts);
+  return { ...state, balance, tickets, ledger, audit };
+}
+
 export function canRefill(state: AppState, ts: number): boolean {
   if (state.balance >= REFILL_THRESHOLD) return false;
   if (state.lastRefillDay === dayKey(ts)) return false;
